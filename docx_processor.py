@@ -190,25 +190,59 @@ class DocxProcessor:
         return item_doc
     
     def xu_ly_hl(self, content):
-        """Xử lý nội dung học liệu"""
+        """Xử lý nội dung học liệu (giữ nguyên HTML: format, ảnh, bảng, sub/sup, v.v.)"""
         html_content = ""
-        
+
         for element in content:
+            # 🧱 Nếu là bảng -> chuyển nguyên bảng
             if isinstance(element, Table):
                 html_content += self.convert_table_to_html(element)
-            elif isinstance(element, Paragraph):
-                text = element.text.strip()
-                
-                # Bỏ "HL:"
-                if text.startswith('HL:'):
-                    text = text.replace('HL:', '').strip()
-                    if text:
-                        html_content += text + '<br>\n'
-                    continue
-                
-                html_content += self.convert_paragraph_to_html(element)
-        
+                continue
+
+            # 🖼️ Nếu là đoạn văn (Paragraph)
+            if isinstance(element, Paragraph):
+                paragraph_html = ""
+
+                # Nếu đoạn có ảnh (inline shape)
+                for run in element.runs:
+                    # Nếu có ảnh trong run
+                    for inline_shape in run.element.findall(".//a:blip", self.nsmap):
+                        embed = inline_shape.get("{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed")
+                        if embed and embed in self.doc.part.rels:
+                            image_part = self.doc.part.rels[embed].target_part
+                            image_bytes = image_part.blob
+                            image_base64 = base64.b64encode(image_bytes).decode('utf-8')
+                            image_html = f'<img src="data:image/png;base64,{image_base64}" alt="image" style="max-width:100%; height:auto;">'
+                            paragraph_html += image_html
+
+                    # Văn bản trong run
+                    run_text = run.text
+                    if not run_text:
+                        continue
+
+                    # Giữ định dạng
+                    if run.bold:
+                        run_text = f"<strong>{run_text}</strong>"
+                    if run.italic:
+                        run_text = f"<em>{run_text}</em>"
+                    if run.underline:
+                        run_text = f"<u>{run_text}</u>"
+                    if getattr(run.font, "subscript", False):
+                        run_text = f"<sub>{run_text}</sub>"
+                    if getattr(run.font, "superscript", False):
+                        run_text = f"<sup>{run_text}</sup>"
+
+                    paragraph_html += run_text
+
+                # Nếu đoạn có text bắt đầu bằng "HL:" thì bỏ tiền tố đó
+                if paragraph_html.strip().startswith("HL:"):
+                    paragraph_html = paragraph_html.strip()[3:].strip()
+
+                if paragraph_html.strip():
+                    html_content += f"{paragraph_html}<br>\n"
+
         return html_content
+
     
     def convert_paragraph_to_html(self, paragraph, allow_p=True):
         """Convert paragraph sang HTML, hợp nhất các run có cùng style"""
@@ -374,38 +408,39 @@ class DocxProcessor:
             return imgs
 
     def _make_img_tag_from_rid(self, rId):
-            """
-            Dùng rId để lấy image part từ self.doc.part.related_parts,
-            trả về một thẻ <img src="data:..."> hoặc None.
-            """
-            try:
-                # related_parts: mapping rId -> Part (chứa .blob và .content_type)
-                part = self.doc.part.related_parts.get(rId)
-                if not part:
-                    # có thể relationship nằm trong phụ part (ví dụ trong headers/footers),
-                    # thử tìm mọi part trong document (an toàn hơn)
-                    for rel in self.doc.part.rels.values():
-                        try:
-                            target = getattr(rel, 'target_part', None)
-                            if target and getattr(target, 'reltype', None) and 'image' in getattr(target, 'content_type', ''):
-                                # không chắc 100% nhưng thử tiếp
-                                if rel.rId == rId:
-                                    part = target
-                                    break
-                        except Exception:
-                            continue
+        """
+        Dùng rId để lấy image part từ self.doc.part.related_parts,
+        trả về một thẻ <img src="data:..."> hoặc None.
+        """
+        try:
+            # related_parts: mapping rId -> Part (chứa .blob và .content_type)
+            part = self.doc.part.related_parts.get(rId)
+            if not part:
+                # có thể relationship nằm trong phụ part (ví dụ trong headers/footers),
+                # thử tìm mọi part trong document (an toàn hơn)
+                for rel in self.doc.part.rels.values():
+                    try:
+                        target = getattr(rel, 'target_part', None)
+                        if target and getattr(target, 'reltype', None) and 'image' in getattr(target, 'content_type', ''):
+                            if rel.rId == rId:
+                                part = target
+                                break
+                    except Exception:
+                        continue
 
-                if not part:
-                    # không tìm thấy image part
-                    return None
+            if not part:
+                # không tìm thấy image part
+                return None
 
-                img_bytes = part.blob
-                content_type = getattr(part, 'content_type', 'image/png')
-                # encode base64
-                b64 = base64.b64encode(img_bytes).decode('ascii')
-                return f'<center><img src="data:{content_type};base64,{b64}" /></center>'
-            except Exception:
-                return None   
+            img_bytes = part.blob
+            content_type = getattr(part, 'content_type', 'image/png')
+            # encode base64
+            b64 = base64.b64encode(img_bytes).decode('ascii')
+            # hardcode width và height
+            style = 'style="width:321px;height:214px;"'
+            return f'<center><img src="data:{content_type};base64,{b64}" {style} /></center>'
+        except Exception:
+            return None
         
     def protocol_of_q(self, question, each_question_xml, subject):
         """Phân tích cấu trúc câu hỏi"""
@@ -569,6 +604,35 @@ class DocxProcessor:
                     SubElement(xml, 'contentMedia').text = code
                     SubElement(xml, 'typeContentMedia').text = 'CodeYouTuBe'
                     one_media = True
+    def convert_content_to_html(self, paragraphs):
+        """
+        Chuyển list Paragraph / Table sang HTML hoàn chỉnh, giữ table, ảnh, math-latex.
+        KHÔNG tự bọc <div class='content'> để tránh lặp.
+        """
+        string_content = ""
+        for para in paragraphs:
+            if isinstance(para, Table):
+                string_content += self.convert_table_to_html(para)
+            else:
+                new_children = []
+                try:
+                    self.convert_normal_paras(para, 0, new_children)
+                    string_content += "".join(new_children)
+                except TypeError:
+                    res = self.convert_normal_paras(para)
+                    if isinstance(res, str):
+                        string_content += res
+                    elif isinstance(res, list):
+                        string_content += "".join(res)
+                    else:
+                        string_content += str(res)
+            string_content += "<br>"
+
+        # Xử lý math-latex
+        import re
+        math_latex = re.compile(r"\$[^$]*\$")
+        string_content = math_latex.sub(lambda m: f'<span class="math-tex">{m.group()}</span>', string_content)
+        return string_content.strip()
     
     def dang_tn(self, cau_sau_xu_ly, xml, audio):
         """Xử lý dạng Trắc nghiệm"""
@@ -620,34 +684,29 @@ class DocxProcessor:
         self.hdg_tn(array_hdg, xml)
     
     def list_answers_tn(self, content, answer_para, xml):
-        """Tạo danh sách đáp án TN, bỏ thẻ HTML thừa"""
+        """Tạo danh sách đáp án TN, bỏ prefix A./B./C./D. và KHÔNG bọc <div class='content'>."""
+        import re
         multiple_choices = []
-        
         for array_para in content:
-            # Lấy text thuần, bỏ hết thẻ HTML
-            choice_html = self.convert_b4_add(array_para)
-            # choice_text = self.strip_html(choice_html)  # hàm mới sẽ viết bên dưới
-            content_elem.text = choice_html
-            multiple_choices.append(choice_text)
-        
+            choice_html = self.convert_content_to_html(array_para if isinstance(array_para, list) else [array_para])
+            # Bỏ prefix A. B. C. D. nếu có (đầu câu)
+            choice_html = re.sub(r"^(<[^>]+>)*\s*[A-Za-z][\.\)]\s*", "", choice_html)
+            multiple_choices.append(choice_html.strip())
+
         # Lấy đáp án đúng
         if isinstance(answer_para, list) and len(answer_para) > 0:
             answer_text = answer_para[0].text.strip()
         else:
             answer_text = answer_para.text.strip()
-        
         number_of_answer = [c for c in answer_text if c.isdigit()]
-        
+
         listanswers = SubElement(xml, 'listanswers')
-        
         for i, choice in enumerate(multiple_choices):
             answer = SubElement(listanswers, 'answer')
             SubElement(answer, 'index').text = str(i)
-            
             content_elem = SubElement(answer, 'content')
-            # Gán text trực tiếp, không tạo <p> thừa
+            # Không bọc <div> nữa, chỉ giữ nội dung HTML thuần
             content_elem.text = choice
-            
             is_correct = 'TRUE' if str(i + 1) in number_of_answer else 'FALSE'
             SubElement(answer, 'isanswer').text = is_correct
 
@@ -661,197 +720,121 @@ class DocxProcessor:
         return text
     
     def hdg_tn(self, array_hdg, xml):
-        """Hướng dẫn giải TN"""
+        """Hướng dẫn giải TN, giữ HTML (ảnh/table)"""
         if isinstance(array_hdg, list) and len(array_hdg) > 0:
-            hdg_text = self.convert_b4_add(array_hdg)
-        else:
-            hdg_text = "Đáp án đúng"
-        
-        SubElement(xml, 'explainquestion').text = hdg_text
+            hdg_html = self.convert_content_to_html(array_hdg)
+            if hdg_html:  # Chỉ thêm nếu có nội dung
+                SubElement(xml, 'explainquestion').text = hdg_html
     
     def dang_ds(self, cau_sau_xu_ly, xml, audio):
-        """Xử lý dạng Đúng/Sai"""
+        """Xử lý dạng Đúng/Sai, tách đúng phần phát biểu và HDG"""
         SubElement(xml, 'typeAnswer').text = '1'
         SubElement(xml, 'typeViewContent').text = '0'
         SubElement(xml, 'template').text = '0'
-        
-        # Hint
-        if len(cau_sau_xu_ly[1]) > 2:
-            hint = self.convert_b4_add(cau_sau_xu_ly[1][2])
-            SubElement(xml, 'hintQuestion').text = hint
-        
-        # Phân tích content
-        content_q = []
-        for idx, para in enumerate(cau_sau_xu_ly[0]):
-            if idx == 0:
-                content_q.append([para])
-                continue
-            
-            if isinstance(para, Paragraph):
-                text = para.text.strip()
-                if re.match(r'^[a-d]\)', text) or re.match(r'^\d+\)', text):
-                    if len(content_q) == 1:
-                        content_q.append([[para]])
-                    else:
-                        content_q[1].append([para])
-                    continue
-            
-            if len(content_q) == 1:
-                content_q[0].append(para)
+
+        # ✅ Tách phần nội dung câu hỏi
+        paragraphs = cau_sau_xu_ly[0]
+        statements = []
+        intro_paras = []
+
+        import re
+        for para in paragraphs:
+            if isinstance(para, Paragraph) and re.match(r'^[a-d]\)', para.text.strip(), re.IGNORECASE):
+                statements.append(para)
+            elif isinstance(para, Paragraph) and re.match(r'^[a-d]\.', para.text.strip(), re.IGNORECASE):
+                statements.append(para)
             else:
-                content_q[1][-1].append(para)
-        
-        if len(content_q) != 2:
-            raise ValueError("Không đúng dạng Đúng/Sai")
-        
-        # Content question
-        noi_dung = self.convert_b4_add(content_q[0])
-        
+                intro_paras.append(para)
+
+        # ✅ Phần mở đầu (mô tả tình huống)
+        content_html = self.convert_content_to_html(intro_paras)
         if audio and len(audio[0]) > 8:
             link = audio[0].replace('Audio:', '').strip()
-            noi_dung += f'''<audio controls=""><source src="{link}" type="audio/mpeg">Your browser does not support the audio element.</audio>'''
-        
-        SubElement(xml, 'contentquestion').text = noi_dung
-        
-        # Answers
-        answers = cau_sau_xu_ly[1][0][0].text.strip() if isinstance(cau_sau_xu_ly[1][0], list) else cau_sau_xu_ly[1][0].text.strip()
-        
-        if len(answers) != len(content_q[1]):
-            raise ValueError(f"Số đáp án không khớp: {len(answers)} vs {len(content_q[1])}")
-        
+            content_html += f'<audio controls=""><source src="{link}" type="audio/mpeg"></audio>'
+        SubElement(xml, 'contentquestion').text = content_html
+
+        # ✅ Danh sách các phát biểu a/b/c/d
         listanswers = SubElement(xml, 'listanswers')
-        
-        for i, content_item in enumerate(content_q[1]):
-            value_text = self.convert_b4_add(content_item).strip()
-            value_text = re.sub(r'^.*?\)', '', value_text).strip()
-            
+        for i, para in enumerate(statements):
+            ans_html = self.convert_content_to_html([para])
+            ans_html = re.sub(r'^\s*([A-Da-d])[\.\)]\s*', '', ans_html)
             answer = SubElement(listanswers, 'answer')
             SubElement(answer, 'index').text = str(i)
-            SubElement(answer, 'content').text = value_text
-            SubElement(answer, 'isanswer').text = 'TRUE' if answers[i] == '1' else 'FALSE'
-        
-        # HDG
-        hdg_text = self.convert_b4_add(cau_sau_xu_ly[1][1]) if len(cau_sau_xu_ly[1]) > 1 else ""
-        SubElement(xml, 'explainquestion').text = hdg_text
+            SubElement(answer, 'content').text = ans_html
+            SubElement(answer, 'isanswer').text = 'FALSE'  # tạm thời FALSE, sửa sau theo đáp án
+
+        # ✅ Lấy chuỗi đáp án đúng/sai (0111, 1010, ...)
+        if len(cau_sau_xu_ly[1]) > 0:
+            if isinstance(cau_sau_xu_ly[1][0], list):
+                ans_text = cau_sau_xu_ly[1][0][0].text.strip()
+            else:
+                ans_text = cau_sau_xu_ly[1][0].text.strip()
+            for i, ch in enumerate(ans_text):
+                if i < len(listanswers):
+                    listanswers[i].find('isanswer').text = 'TRUE' if ch == '1' else 'FALSE'
+
+        # ✅ Hướng dẫn giải (HDG)
+        if len(cau_sau_xu_ly[1]) > 1:
+            flat_hdg = []
+            for item in cau_sau_xu_ly[1][1:]:
+                if isinstance(item, list):
+                    flat_hdg.extend(item)
+                else:
+                    flat_hdg.append(item)
+            hdg_html = self.convert_content_to_html(flat_hdg)
+        else:
+            hdg_html = ''
+        SubElement(xml, 'explainquestion').text = hdg_html
     
     def dang_dt(self, cau_sau_xu_ly, xml, subject):
-        """Xử lý dạng Điền từ"""
+        """Xử lý dạng Điền từ, giữ table/ảnh và thêm title mặc định"""
         SubElement(xml, 'typeAnswer').text = '5'
         SubElement(xml, 'typeViewContent').text = '0'
         SubElement(xml, 'template').text = '23'
-        
-        # Hint
-        if len(cau_sau_xu_ly[1]) > 1:
-            hint = self.convert_b4_add(cau_sau_xu_ly[1][1])
-            SubElement(xml, 'hintQuestion').text = hint
-        
-        content = self.convert_b4_add(cau_sau_xu_ly[0])
-        array_content = content.split('<br>')
-        
-        contentq = SubElement(xml, 'contentquestion')
-        
-        # Title
-        title_div = SubElement(contentq, 'div')
-        title_div.set('class', 'title')
-        current_title_txt = array_content[0] if array_content else ''
-        array_content = array_content[1:]
-        
-        # Answer input
-        current_input_index = 0
-        dap_an_dt = []
-        ans_input = SubElement(contentq, 'div')
-        ans_input.set('class', 'answer-input')
-        
-        for content_line in array_content:
-            if '[[' not in content_line and ']]' not in content_line and content_line.strip():
-                cauhoi_div = SubElement(contentq, 'div')
-                cauhoi_div.set('class', 'content')
-                cauhoi_div.text = content_line
-            else:
-                # Xử lý input
-                def replace_input(match):
-                    nonlocal current_input_index
-                    current_input_index += 1
-                    answer = match.group(1)
-                    dap_an_dt.append(answer)
-                    return f'<span class="ans-span-second"></span><input class="can-resize-second" type="text" id="mathplay-answer-{current_input_index}">'
-                
-                new_cau = re.sub(r'\[\[(.*?)\]\]', replace_input, content_line)
-                
-                if new_cau.strip():
-                    line_div = SubElement(ans_input, 'div')
-                    if '<center>' in new_cau:
-                        line_div.text = new_cau
-                    else:
-                        line_div.set('class', 'line')
-                        line_div.text = new_cau
-        
-        # Xử lý title
-        cleaned_title = re.sub(r'\<.*?\>', '', current_title_txt)
-        cleaned_title = re.sub(r'Câu\s*\d+[:\.]?', '', cleaned_title, flags=re.IGNORECASE).strip()
-        
-        if len(cleaned_title) > 3 and subject not in self.subjects_with_default_titles:
-            title_div.text = current_title_txt
-        else:
-            if subject in self.subjects_with_default_titles:
-                all_dap_an = ''.join(dap_an_dt)
-                if re.search(r'[a-zA-Z]', all_dap_an):
-                    title_div.text = 'Điền đáp án thích hợp vào ô trống'
-                else:
-                    title_div.text = 'Điền đáp án thích hợp vào ô trống (chỉ sử dụng chữ số, dấu "," và dấu "-")'
-            else:
-                contentq.remove(title_div)
-        
+
+        # Title mặc định
+        title_html = "<strong>Điền đáp án thích hợp vào ô trống (chỉ sử dụng chữ số, dấu ',' và dấu '-')</strong><br>"
+
+        # Content câu hỏi
+        content_html = title_html + self.convert_content_to_html(cau_sau_xu_ly[0])
+        SubElement(xml, 'contentquestion').text = content_html
+
         # List answers
         listanswers = SubElement(xml, 'listanswers')
-        for i, tra_loi in enumerate(dap_an_dt):
-            tra_loi = tra_loi.strip().replace("'", "'").replace('|', '[-]')
-            
+        for i, para in enumerate(cau_sau_xu_ly[1:] if len(cau_sau_xu_ly) > 1 else []):
+            answer_html = self.convert_content_to_html([para])
             answer = SubElement(listanswers, 'answer')
             SubElement(answer, 'index').text = str(i)
-            SubElement(answer, 'content').text = tra_loi
+            SubElement(answer, 'content').text = answer_html
             SubElement(answer, 'isanswer').text = 'TRUE'
-        
+
         # HDG
-        hdg = cau_sau_xu_ly[1][0]
-        hdg_text = self.convert_b4_add(hdg[1:]) if isinstance(hdg, list) and len(hdg) > 1 else ""
+        hdg_html = self.convert_content_to_html(cau_sau_xu_ly[1:]) if len(cau_sau_xu_ly) > 1 else ''
+        SubElement(xml, 'explainquestion').text = hdg_html
         
-        if not hdg_text.strip():
-            dap_an = ','.join(dap_an_dt)
-            hdg_text = f"Đáp án đúng theo thứ tự là: {dap_an}"
-        
-        SubElement(xml, 'explainquestion').text = hdg_text
-    
     def dang_tl(self, cau_sau_xu_ly, xml, audio):
-        """Xử lý dạng Tự luận"""
+        """Xử lý dạng Tự luận, giữ table/ảnh trong content và HDG"""
         SubElement(xml, 'typeAnswer').text = '3'
         SubElement(xml, 'typeViewContent').text = '0'
         SubElement(xml, 'template').text = '0'
-        
-        # Hint
-        if len(cau_sau_xu_ly[1]) > 1:
-            hint = self.convert_b4_add(cau_sau_xu_ly[1][1])
-            SubElement(xml, 'hintQuestion').text = hint
-        
+
         # Content
-        cau_hoi = self.convert_b4_add(cau_sau_xu_ly[0])
-        
+        content_html = self.convert_content_to_html(cau_sau_xu_ly[0])
         if audio and len(audio[0]) > 8:
             link = audio[0].replace('Audio:', '').strip()
-            cau_hoi += f'''<div class="content"><audio controls=""><source src="{link}" type="audio/mpeg">Your browser does not support the audio element.</audio></div>'''
-        
-        SubElement(xml, 'contentquestion').text = cau_hoi
-        
-        # List answers (placeholder)
+            content_html += f'<audio controls=""><source src="{link}" type="audio/mpeg"></audio>'
+        SubElement(xml, 'contentquestion').text = content_html
+
+        # List answers placeholder
         listanswers = SubElement(xml, 'listanswers')
         answer = SubElement(listanswers, 'answer')
         SubElement(answer, 'index').text = '0'
         SubElement(answer, 'content').text = 'REPLACELATER'
         SubElement(answer, 'isanswer').text = 'TRUE'
-        
+
         # HDG
-        hdg = self.convert_b4_add(cau_sau_xu_ly[1][0])
-        SubElement(xml, 'explainquestion').text = hdg
+        hdg_html = self.convert_content_to_html(cau_sau_xu_ly[1]) if len(cau_sau_xu_ly) > 1 else ''
+        SubElement(xml, 'explainquestion').text = hdg_html
     
     def convert_b4_add(self, paragraphs):
         """Xử lý danh sách paragraph thành HTML (giống GAS ConvertB4Add)"""
@@ -870,7 +853,8 @@ class DocxProcessor:
         #         string_content += f"{new_content}<br>"
         #     else:
         #         string_content += new_content
-        string_content = '<div class="content">'
+        # string_content = '<div class="content">'
+        string_content = '<p>'
         for index, paragraph in enumerate(paragraphs):
             new_children = []
 
@@ -886,7 +870,8 @@ class DocxProcessor:
             new_content = "".join(new_children)
             string_content += f"{new_content}<br>"
 
-        string_content += "</div>"
+        # string_content += "</div>"
+        string_content += "</p>"
 
         # Xử lý math-latex: $...$
         import re

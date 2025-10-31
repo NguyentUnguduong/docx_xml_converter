@@ -1,7 +1,11 @@
 import pytest
 from xml.etree.ElementTree import Element
 from docx_processor import DocxProcessor
+import random
+import string
 
+import sys, os
+sys.path.append(os.path.dirname(os.path.dirname(__file__)))
 # ===== Helper giả lập paragraph / run =====
 class FakeRun:
     def __init__(self, text="", bold=False, italic=False, underline=False, subscript=False, superscript=False):
@@ -14,6 +18,9 @@ class FakeRun:
         self.font = Font()
         self.font.subscript = subscript
         self.font.superscript = superscript
+
+        # 🔧 Thêm mock element để tránh AttributeError
+        self._element = type("E", (), {"xpath": lambda *a, **kw: []})()
 
 class FakeParagraph:
     def __init__(self, text="", runs=None, alignment=0):
@@ -112,3 +119,57 @@ def test_post_process_xml_basic(processor, tmp_path):
     result = processor.post_process_xml(xml_str)
     assert isinstance(result, str)
     assert "<?xml" in result
+
+@pytest.mark.parametrize("n", range(10))
+def test_random_escape_and_wrap_style(processor, n):
+    # Sinh ngẫu nhiên text có ký tự đặc biệt
+    text = "".join(random.choice(string.ascii_letters + string.punctuation + " <>/&") for _ in range(30))
+    escaped = processor.escape_html(text)
+    assert isinstance(escaped, str)
+    # Đảm bảo không còn ký tự HTML chưa escape
+    assert "<" not in escaped or "&lt;" in escaped
+    assert ">" not in escaped or "&gt;" in escaped
+
+    # Random style tuple (bold, italic, underline, sup, sub)
+    style = tuple(random.choice([True, False]) for _ in range(5))
+    wrapped = processor.wrap_style("abc", style)
+    assert isinstance(wrapped, str)
+    # Nếu có style True thì phải chứa tag tương ứng
+    if style[0]: assert "<strong>" in wrapped
+    if style[1]: assert "<i>" in wrapped
+    if style[2]: assert "<u>" in wrapped
+    if style[3]: assert "<sup>" in wrapped
+    if style[4]: assert "<sub>" in wrapped
+
+# ---- Random test convert_paragraph_to_html ----
+@pytest.mark.parametrize("n", range(10))
+def test_random_convert_paragraph_to_html(processor, n):
+    text = "".join(random.choice(string.ascii_letters + " ") for _ in range(random.randint(5, 40)))
+    runs = [
+        FakeRun(text[random.randint(0, len(text)-1):], bold=random.choice([True, False]), italic=random.choice([True, False]))
+        for _ in range(random.randint(1, 3))
+    ]
+    p = FakeParagraph(text, runs)
+    html = processor.convert_paragraph_to_html(p)
+    assert isinstance(html, str)
+    assert html.startswith("<p")
+    assert "</p>" in html
+
+# ---- Random test convert_content_to_html ----
+@pytest.mark.parametrize("n", range(10))
+def test_random_convert_content_to_html(processor, n):
+    # tạo danh sách 3 đoạn văn random
+    paras = [FakeParagraph("Random " + "".join(random.choices(string.ascii_letters, k=10))) for _ in range(3)]
+    html = processor.convert_content_to_html(paras)
+    assert isinstance(html, str)
+    assert all(p.text.split()[1] in html for p in paras)
+
+# ---- Random test strip_html với HTML lồng nhau ----
+@pytest.mark.parametrize("n", range(10))
+def test_random_strip_html(processor, n):
+    html = "".join(random.choice([
+        "<p>abc</p>", "<strong>x</strong>", "<i>y</i>", "<u>z</u>"
+    ]) for _ in range(random.randint(2, 5)))
+    result = processor.strip_html(html)
+    assert isinstance(result, str)
+    assert "<" not in result and ">" not in result

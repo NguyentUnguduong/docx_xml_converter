@@ -691,10 +691,7 @@ class DocxProcessor:
     def dang_tn(self, cau_sau_xu_ly, xml, audio):
         """
         Xử lý dạng Trắc nghiệm (typeAnswer=0, template=0)
-        Xuất ra XML chuẩn như mẫu:
-        - contentquestion: text thuần
-        - listanswers: mỗi answer có <p>...</p>
-        - explainquestion: do hdg_tn() xử lý riêng
+        - Đáp án đúng được xác định bằng số 1,2,3,4 trong phần Lời giải (1=A, 2=B, 3=C, 4=D)
         """
         import re
         from xml.etree.ElementTree import SubElement
@@ -712,35 +709,42 @@ class DocxProcessor:
         for para in cau_sau_xu_ly[0]:
             if isinstance(para, Paragraph):
                 text = para.text.strip()
-                # Kiểm tra xem có phải đáp án (A./B./C./D.)
+                # Nhận diện các dòng A. B. C. D.
                 if re.match(r'^[A-D]\.', text):
                     answers_part.append(para)
                 else:
                     content_part.append(para)
             elif isinstance(para, Table):
-                # Giữ nguyên bảng trong phần câu hỏi
                 content_part.append(para)
 
-        # HTML câu hỏi (giữ format cơ bản, không bọc <div>)
+        # HTML câu hỏi
         content_html = self.convert_content_to_html(content_part)
-
-        # Nếu có audio
         if audio and len(audio[0]) > 8:
             link = audio[0].replace('Audio:', '').strip()
             content_html += f'<audio controls=""><source src="{link}" type="audio/mpeg"></audio>'
 
         SubElement(xml, 'contentquestion').text = content_html.strip()
 
-        # ===== 2️⃣ Xử lý danh sách đáp án =====
-        listanswers = SubElement(xml, 'listanswers')
-
-        # Nếu có phần thứ 2 trong cau_sau_xu_ly chứa thông tin đáp án đúng (cờ TRUE/FALSE)
-        answer_flags = []
+        # ===== 2️⃣ Tìm đáp án đúng từ phần Lời giải =====
+        correct_index = None  # chỉ số 0-based của đáp án đúng
         if len(cau_sau_xu_ly) > 1 and cau_sau_xu_ly[1]:
-            if isinstance(cau_sau_xu_ly[1][0], list):
-                answer_flags = cau_sau_xu_ly[1][0]
-            else:
-                answer_flags = []
+            # Lấy đoạn đầu tiên của phần lời giải
+            first = cau_sau_xu_ly[1][0]
+            if isinstance(first, list):
+                # Nếu là danh sách Paragraph
+                for p in first:
+                    if hasattr(p, 'text'):
+                        m = re.search(r'\b([1-4])\b', p.text.strip())
+                        if m:
+                            correct_index = int(m.group(1)) - 1
+                            break
+            elif hasattr(first, 'text'):
+                m = re.search(r'\b([1-4])\b', first.text.strip())
+                if m:
+                    correct_index = int(m.group(1)) - 1
+
+        # ===== 3️⃣ Sinh danh sách đáp án =====
+        listanswers = SubElement(xml, 'listanswers')
 
         for i, para in enumerate(answers_part):
             # Bỏ prefix A./B./C./D.
@@ -750,18 +754,12 @@ class DocxProcessor:
             answer_el = SubElement(listanswers, 'answer')
             SubElement(answer_el, 'index').text = str(i)
             SubElement(answer_el, 'content').text = content_html
+            SubElement(answer_el, 'isanswer').text = 'TRUE' if i == correct_index else 'FALSE'
 
-            # Đánh dấu đúng/sai (nếu có cờ)
-            is_true = 'FALSE'
-            if answer_flags:
-                if chr(65 + i) in answer_flags or str(i) in answer_flags:
-                    is_true = 'TRUE'
-            SubElement(answer_el, 'isanswer').text = is_true
-
-        # Phần explainquestion (hướng dẫn giải) tách sang hdg_tn()
+        # ===== 4️⃣ Gọi hdg_tn() để xử lý phần giải thích chi tiết =====
         self.hdg_tn(cau_sau_xu_ly[1] if len(cau_sau_xu_ly) > 1 else None, xml)
         
-        def list_answers_tn(self, content, answer_para, xml):
+    def list_answers_tn(self, content, answer_para, xml):
             """Tạo danh sách đáp án TN, bỏ prefix A./B./C./D. và KHÔNG bọc <div class='content'>."""
             import re
             multiple_choices = []
@@ -800,7 +798,9 @@ class DocxProcessor:
     def hdg_tn(self, array_hdg, xml):
         """
         Hướng dẫn giải TN, giữ HTML (ảnh/table)
-        Tự động thêm "Đáp án đúng là: ..." nếu có thông tin
+        - Giữ logic cũ phát hiện đáp án
+        - Tự động bỏ dòng "Đáp án đúng là...", số đáp án đầu dòng (1,2,3,...) hoặc chữ (A,B,C,D)
+        - Bỏ luôn tiền tố "Giải thích:" nếu có
         """
         import re
         from xml.etree.ElementTree import SubElement
@@ -820,7 +820,6 @@ class DocxProcessor:
         index_answer = []
         hdg_raw = ''
 
-        # Trường hợp array_hdg chứa list của Paragraphs, hoặc nested list
         if isinstance(array_hdg, list):
             for part in array_hdg:
                 if hasattr(part, "text"):
@@ -830,7 +829,7 @@ class DocxProcessor:
                         if hasattr(p, "text"):
                             hdg_raw += p.text.strip() + " "
 
-        # Tìm số (1,2,3,...) hoặc chữ cái (A-D)
+        # Tìm đáp án
         index_answer = [int(ch) for ch in re.findall(r'\d+', hdg_raw)]
         if index_answer:
             dap_an = ' '.join(answer_letters[i - 1] for i in index_answer if 1 <= i <= len(answer_letters))
@@ -845,11 +844,27 @@ class DocxProcessor:
         plain = re.sub(r'<[^>]+>', '', hdg_html).strip()
 
         if len(plain) > 4:
-            # Nếu có hướng dẫn thật, ưu tiên hơn
-            explain_text = hdg_html
+            # Nếu có giải thích thật → bỏ phần đáp án và tiền tố "Giải thích:"
+            explain_text = hdg_html.strip()
+
+            # --- Xóa phần đáp án đầu đoạn (dạng "1", "2", "A", "B"...) ---
+            explain_text = re.sub(
+                r'^\s*(\d+|[A-Da-d])\s*(<br\s*/?>|:|\.|,)?\s*',
+                '',
+                explain_text,
+                flags=re.IGNORECASE
+            )
+
+            # --- Bỏ tiền tố "Giải thích:" hoặc "Giải thích<br>" ---
+            explain_text = re.sub(
+                r'^\s*Giải\s*thích\s*[:：]?\s*(<br\s*/?>)?',
+                '',
+                explain_text,
+                flags=re.IGNORECASE
+            ).strip()
 
         SubElement(xml, 'explainquestion').text = explain_text.strip()
-        
+
     def dang_ds(self, cau_sau_xu_ly, xml, audio):
         """Xử lý dạng Đúng/Sai, tách đúng phần phát biểu và HDG"""
         SubElement(xml, 'typeAnswer').text = '1'

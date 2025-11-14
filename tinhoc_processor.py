@@ -328,25 +328,35 @@ class TinHocProcessor:
             html_content += '</strong>'
         
         return html_content
-
     def hdg_tn_tinhoc(self, array_hdg: List, index_answer: List[str], 
-                      each_question_xml: ET.Element, doc: Document = None):
-        """Process explanation for TN - Tin học"""
+                    each_question_xml: ET.Element, doc: Document = None):
+        """Process explanation for TN - Tin học.
+        Nếu có hướng dẫn (hdg) thực sự thì thêm vào, 
+        còn nếu trống thì KHÔNG thêm 'Đáp án đúng là ...'."""
+        import re
+
         answer = ['A', 'B', 'C', 'D']
-        
+
+        # Xử lý đáp án đúng (vẫn giữ nguyên)
         dap_an = ' '.join(answer[int(idx) - 1] for idx in index_answer)
-        loi_giai = f'Đáp án đúng là: {dap_an}'
-        
-        huong_dan_giai = self.convert_b4_add_tinhoc(array_hdg, doc)
-        
-        if len(huong_dan_giai) > 4:
-            test = re.sub(r'<.*?>', '', huong_dan_giai)
-            test = re.sub(r'</.*?>', '', test)
-            if len(test.strip()) > 4:
-                loi_giai = huong_dan_giai
-        
-        explainq = self.create_safe_text_node('explainquestion', loi_giai)
-        each_question_xml.append(explainq)
+
+        # Convert phần hướng dẫn
+        huong_dan_giai = self.convert_b4_add_tinhoc(array_hdg, doc).strip()
+
+        # Loại bỏ thẻ HTML để kiểm tra text thực
+        text_check = re.sub(r'<.*?>', '', huong_dan_giai).strip()
+
+        # ✅ Nếu có nội dung thật (dài hơn 0 ký tự) thì dùng luôn
+        if len(text_check) > 0:
+            loi_giai = huong_dan_giai
+        else:
+            # Nếu không có hdg, KHÔNG thêm "Đáp án đúng là ..."
+            loi_giai = ""
+
+        # ✅ Chỉ tạo node nếu thực sự có nội dung
+        if loi_giai:
+            explainq = self.create_safe_text_node('explainquestion', loi_giai)
+            each_question_xml.append(explainq)
 
     # ============================================
     # DS (True/False) Processing Functions

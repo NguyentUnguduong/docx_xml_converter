@@ -501,53 +501,7 @@ class DocxProcessor:
                 pass
             return imgs
 
-    # def _make_img_tag_from_rid(self, rId):
-    #     # (phần code cũ không thay đổi)
-    #     ...
-
-    # def _make_img_tag_from_rid(self, rId):
-    #     """
-    #     Dùng rId để lấy image part từ self.doc.part.related_parts,
-    #     trả về một thẻ <img src="data:..."> hoặc None.
-    #     """
-    #     try:
-    #         part = self.doc.part.related_parts.get(rId)
-    #         if not part:
-    #             # fallback: tìm trong các rels
-    #             for rel in self.doc.part.rels.values():
-    #                 try:
-    #                     target = getattr(rel, 'target_part', None)
-    #                     if target and 'image' in getattr(target, 'content_type', ''):
-    #                         if rel.rId == rId:
-    #                             part = target
-    #                             break
-    #                 except Exception:
-    #                     continue
-    #         if not part:
-    #             print(f"[DEBUG] Không tìm thấy part cho rId={rId}")
-    #             return None
-    #         img_bytes = part.blob
-    #         content_type = getattr(part, 'content_type', 'image/png')
-    #         # --- Đọc kích thước gốc ---
-    #         try:
-    #             img = Image.open(BytesIO(img_bytes))
-    #             width, height = img.size
-    #             print(f"[DEBUG] Ảnh rId={rId} size: {width}x{height}")
-    #         except Exception as e:
-    #             print(f"[WARN] Không đọc được kích thước ảnh: {e}")
-    #             width, height = 300, 200  # fallback
-    #         # encode base64
-    #         b64 = base64.b64encode(img_bytes).decode('ascii')
-    #         # --- Sinh tag HTML ---
-    #         style = f'style="max-width:{width}px; height:{height};"'
-    #         # hoặc nếu muốn cố định tỉ lệ: style = f'style="width:{width}px;height:{height}px;"'
-    #         return f'<center><img src="data:{content_type};base64,{b64}" {style} /></center>'
-    #     except Exception as e:
-    #         print(f"[ERROR] _make_img_tag_from_rid lỗi: {e}")
-    #         import traceback; traceback.print_exc()
-    #         return None
-
-  
+ 
 
     def _make_img_tag_from_rid(self, rId):
         """
@@ -774,7 +728,7 @@ class DocxProcessor:
         else:
             self.dang_tl(cau_sau_xu_ly, xml, audio)
 
-    def xu_ly_link_cau_hoi(self, links, xml):
+    def xu_ly_link_cau_hoi(self, links: str, xml):
         """Xử lý links trong câu hỏi"""
         one_tts = False
         one_media = False
@@ -1103,79 +1057,7 @@ class DocxProcessor:
             hdg_html = ''
         SubElement(xml, 'explainquestion').text = hdg_html
 
-    # def dang_dt(self, cau_sau_xu_ly, xml, subject):
-    #     """
-    #     Dạng điền đáp án (typeAnswer=5) - rút gọn, không dùng normalize/unescape.
-    #     Tìm đáp án trực tiếp từ [[...]] rồi xây XML đúng format (contentquestion, listanswers, explainquestion).
-    #     """
-    #     # ===== 1. Meta =====
-    #     SubElement(xml, 'typeAnswer').text = '5'
-    #     SubElement(xml, 'typeViewContent').text = '0'
-    #     SubElement(xml, 'template').text = '23'
-    #     # ===== 2. Hint (nếu có) =====
-    #     if len(cau_sau_xu_ly) > 1 and isinstance(cau_sau_xu_ly[1], list) and len(cau_sau_xu_ly[1]) > 1:
-    #         hint_html = self.convert_b4_add(cau_sau_xu_ly[1][1])
-    #         SubElement(xml, 'hintQuestion').text = hint_html
-    #     # ===== 3. Lấy nội dung gốc và tìm đáp án [[...]] từ đó =====
-    #     raw_html = self.convert_b4_add(cau_sau_xu_ly[0])  # nội dung gốc có thể chứa [[...]]
-    #     # chuẩn hóa <br/>
-    #     raw_html = re.sub(r'<br\s*/?>', '<br/>', raw_html)
-    #     # tìm mọi biểu thức [[...]] trong raw_html (giữ nguyên nội dung giữa [[ ]])
-    #     found_answers = re.findall(r'\[\[(.*?)\]\]', raw_html, flags=re.DOTALL)
-    #     # trim từng answer
-    #     dap_an_dt = [a.strip() for a in found_answers if a.strip()]
-    #     # ===== 4. Loại bỏ các dòng tiêu đề / "Đáp án:" và loại bỏ [[...]] khỏi nội dung hiển thị =====
-    #     # Tách theo <br/> để giữ cấu trúc giống trước
-    #     lines = [ln.strip() for ln in raw_html.split('<br/>')]
-    #     filtered = []
-    #     for ln in lines:
-    #         # if not ln:
-    #         #     continue
-    #         # # bỏ các dòng bắt đầu bằng tiêu đề hoặc "Đáp án" (các dạng có thể xuất hiện)
-    #         # if ln.startswith("Điền đáp án") or ln.startswith("Đáp án") or ln.startswith("Đáp án:"):
-    #         #     continue
-    #         # # loại bỏ mọi [[...]] còn lại
-    #         # ln_clean = re.sub(r'\[\[.*?\]\]', '', ln)
-    #         # ln_clean = ln_clean.strip()
-    #         # if ln_clean:
-    #         #     filtered.append(ln_clean)
-    #         if not ln:
-    #             continue
-    #             # Dùng BeautifulSoup để lấy nội dung văn bản thuần, bỏ thẻ HTML
-    #         text_content = BeautifulSoup(ln, 'html.parser').get_text().strip()
-    #             # bỏ các dòng bắt đầu bằng tiêu đề hoặc "Đáp án" (các dạng có thể xuất hiện)
-    #         if text_content.startswith("Điền đáp án") or text_content.startswith("Đáp án") or text_content.startswith("Đáp án:"):
-    #                 continue
-    #             # loại bỏ mọi [[...]] còn lại
-    #         ln_clean = re.sub(r'\[\[.*?\]\]', '', ln)
-    #         ln_clean = ln_clean.strip()
-    #         if ln_clean:
-    #                 filtered.append(ln_clean)
-    #     # ===== 5. Dựng phần contentquestion (title + content + answer-input) =====
-    #     title_html = '<div class="title">Điền đáp án thích hợp vào ô trống (chỉ sử dụng chữ số, dấu \",\" và dấu \"-\")</div>'
-    #     content_block = '<div class="content">' + '<br/>'.join(filtered) + '</div>'
-    #     answer_input_html = (
-    #         '<div class="answer-input">'
-    #         '<div class="line">Đáp án: <span class="ans-span-second"></span>'
-    #         '<input class="can-resize-second" type="text" id="mathplay-answer-1"/></div></div>'
-    #     )
-    #     full = title_html + content_block + answer_input_html
-    #     SubElement(xml, 'contentquestion').text = full
-    #     # ===== 6. Tạo listanswers đúng format (nếu có đáp án) =====
-    #     if dap_an_dt:
-    #         listanswers = SubElement(xml, 'listanswers')
-    #         for i, ans in enumerate(dap_an_dt):
-    #             # ans có thể là "56,3" hoặc "3" etc. giữ nguyên như người nhập
-    #             answer = SubElement(listanswers, 'answer')
-    #             SubElement(answer, 'index').text = str(i)
-    #             SubElement(answer, 'content').text = ans    
-    #             SubElement(answer, 'isanswer').text = 'TRUE'
-    #         # ===== 7. explainquestion =====
-    #         SubElement(xml, 'explainquestion').text = f"Đáp án đúng theo thứ tự là: {', '.join(dap_an_dt)}"
-    #     else:
-    #         # không có đáp án: không tạo listanswers và explainquestion
-    #         pass
-   
+    
     def dang_dt(self, cau_sau_xu_ly, xml, subject):
         """
         Dạng điền đáp án (typeAnswer=5) - đúng theo mẫu chuẩn và logic GAS.
@@ -1246,10 +1128,11 @@ class DocxProcessor:
         final_line_content = re.sub(r'\[\[.*?\]\]', replace_with_input, full_content_after_title, flags=re.DOTALL)
 
         # ===== 5. Xây dựng answer-input =====
-        answer_input_block = f'<div class="answer-input"><div class="line">{final_line_content}</div></div>'
+        # answer_input_block = f'<div class="answer-input"><div class="line">{final_line_content}</div></div>'
+        answer_input_block = f'<div class="answer-input"><div class="line"></div></div>'
 
         # ===== 6. contentquestion =====
-        content_block = '<div class="content"></div>'
+        content_block = f'<div class="content">{final_line_content}</div>'
         full_content = title_div + content_block + answer_input_block
         SubElement(xml, 'contentquestion').text = full_content
 
@@ -1271,7 +1154,8 @@ class DocxProcessor:
             huong_dan_giai_html = self.convert_b4_add(cau_sau_xu_ly[1][0])
 
             # Loại bỏ #### đầu dòng
-            huong_dan_giai_html = re.sub(r'^\s*#+\s*', '', huong_dan_giai_html)
+            # huong_dan_giai_html = re.sub(r'^\s*#+\s*', '', huong_dan_giai_html)
+            huong_dan_giai_html = re.sub(r'(<p>\s*)(#+\s*)', r'\1', huong_dan_giai_html, flags=re.IGNORECASE)
 
             # Thêm kiểm tra nội dung trống
             plain_hdg = BeautifulSoup(huong_dan_giai_html, 'html.parser').get_text().strip()

@@ -1,0 +1,48 @@
+name: Build & Upload PyInstaller EXE to Release
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'   # Mỗi lần push tag như v1.0.1 sẽ tự build release
+
+jobs:
+  build:
+    runs-on: windows-latest
+
+    steps:
+      # --- Clone source ---
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # --- Cài Python ---
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      # --- Install dependencies ---
+      - name: Install requirements
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install pyinstaller
+
+      # --- Build EXE ---
+      - name: Build EXE with PyInstaller
+        run: |
+          pyinstaller --noconfirm --onefile --windowed --add-data "*.py;." --name Convert_XML main.py
+
+      # --- Zip output file ---
+      - name: Zip build
+        run: |
+          powershell Compress-Archive -Path "dist\main.exe" -DestinationPath "dist\app.zip" -Force
+
+      # --- Upload to Release ---
+      - name: Upload EXE to Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/main.exe
+            dist/app.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

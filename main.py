@@ -10,7 +10,7 @@ from pathlib import Path
 import tempfile
 from PyQt5.QtWidgets import (QApplication, QMainWindow, QWidget, QVBoxLayout, 
                              QHBoxLayout, QPushButton, QLabel, QListWidget, 
-                             QFileDialog, QProgressBar, QTextEdit, QGroupBox,
+                             QFileDialog, QProgressBar, QTextEdit, QGroupBox,QDialog,
                              QMessageBox, QSplitter)
 from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QFont, QIcon
@@ -107,8 +107,10 @@ def check_for_update():
     try:
         url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
         response = requests.get(url, timeout=10)
-        if response.status_code != 200:
-            return False, None, None
+
+        print("RAW RESPONSE:", response.text)  # In ra phản hồi thô để kiểm tra
+        # if response.status_code != 200:
+        #     return False, None, None
 
         data = response.json()
         latest_tag = data.get("tag_name", "0.0.0").lstrip("vV")  # Loại bỏ 'v' nếu có
@@ -146,8 +148,50 @@ def download_and_update(download_url):
                 for chunk in r.iter_content(chunk_size=8192):
                     f.write(chunk)
 
+        if not getattr(sys, "frozen", False):
+            QMessageBox.warning(None, "Không thể cập nhật",
+                                "Chức năng cập nhật chỉ hoạt động khi chạy file .exe đã đóng gói.\n"
+                                "Bạn đang chạy bằng Python nên không thể cập nhật.")
+            return False
         # Lấy đường dẫn exe hiện tại
         current_exe = sys.executable
+        exe_name = os.path.basename(current_exe).lower()
+
+        # Danh sách tên file Python hệ thống / môi trường cấm xóa
+        forbidden_exes = [
+            "python.exe",
+            "pythonw.exe",
+            "python310.exe",
+            "python311.exe",
+            "python312.exe",
+            "python313.exe"
+        ]
+
+        forbidden_paths = [
+            os.path.expandvars(r"%LOCALAPPDATA%\Programs\Python").lower(),
+            r"C:\Program Files\Python".lower(),
+            r"C:\Program Files (x86)\Python".lower()
+        ]
+
+        if exe_name in forbidden_exes:
+            QMessageBox.critical(
+                None,
+                "Cảnh báo",
+                f"File hiện tại '{exe_name}' là môi trường Python hệ thống.\n"
+                "Không thể cập nhật từ đây để tránh phá hủy môi trường Python."
+            )
+            return False
+        
+        current_exe_lower = current_exe.lower()
+        for path in forbidden_paths:
+            if current_exe_lower.startswith(path):
+                QMessageBox.critical(
+                    None,
+                    "Cảnh báo",
+                    f"File hiện tại đang nằm trong thư mục Python hệ thống:\n{current_exe}\n"
+                    "Không thể cập nhật từ đây."
+                )
+                return False
 
         # Tạo script batch để xóa exe cũ và đổi tên mới (trên Windows)
         bat_script = os.path.join(temp_dir, "update.bat")
@@ -169,27 +213,112 @@ start "" "{current_exe}"
         return False
 
 
-class UpdateDialog(QMessageBox):
-    def __init__(self, latest_version, download_url, parent=None):
+# class UpdateDialog(QMessageBox):
+#     def __init__(self, latest_version, download_url, parent=None):
+#         super().__init__(parent)
+#         self.setWindowTitle("Có bản cập nhật mới!")
+#         self.setText(f"Đã có phiên bản mới: v{latest_version}\nPhiên bản hiện tại: v{CURRENT_VERSION}")
+#         self.setInformativeText("Bạn có muốn cập nhật ngay không?")
+#         self.setIcon(QMessageBox.Information)
+        
+#         self.update_btn = self.addButton("Cập nhật", QMessageBox.AcceptRole)
+#         self.later_btn = self.addButton("Để sau", QMessageBox.RejectRole)
+#         self.setDefaultButton(self.update_btn)
+        
+#         self.download_url = download_url
+
+#     def exec_(self):
+#         result = super().exec_()
+#         clicked = self.clickedButton()
+#         if clicked == self.update_btn:
+#             return "update"
+#         else:
+#             return "later"
+
+class UpdateDialog(QDialog):
+    def __init__(self, current_version, latest_version, download_url, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Có bản cập nhật mới!")
-        self.setText(f"Đã có phiên bản mới: v{latest_version}\nPhiên bản hiện tại: v{CURRENT_VERSION}")
-        self.setInformativeText("Bạn có muốn cập nhật ngay không?")
-        self.setIcon(QMessageBox.Information)
-        
-        self.update_btn = self.addButton("Cập nhật", QMessageBox.AcceptRole)
-        self.later_btn = self.addButton("Để sau", QMessageBox.RejectRole)
-        self.setDefaultButton(self.update_btn)
-        
+        self.setWindowTitle("Cập nhật phần mềm")
+        self.setFixedSize(450, 450)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+
         self.download_url = download_url
+
+        # ---- MAIN LAYOUT ----
+        layout = QVBoxLayout()
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
+
+        # ---- TITLE ----
+        title = QLabel("🔔 Có bản cập nhật mới!")
+        title.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        title.setAlignment(Qt.AlignCenter)
+        layout.addWidget(title)
+
+        # ---- VERSION INFO ----
+        info = QLabel(
+            f"<b>Phiên bản hiện tại:</b> v{current_version}<br>"
+            f"<b>Phiên bản mới:</b> v{latest_version}"
+        )
+        info.setFont(QFont("Segoe UI", 11))
+        info.setAlignment(Qt.AlignCenter)
+        layout.addWidget(info)
+
+        # ---- DESCRIPTION ----
+        desc = QLabel("Bạn có muốn cập nhật ngay không?")
+        desc.setFont(QFont("Segoe UI", 10))
+        desc.setAlignment(Qt.AlignCenter)
+        layout.addWidget(desc)
+
+        # ---- BUTTONS ----
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(20)
+
+        self.btn_update = QPushButton("Cập nhật")
+        self.btn_later = QPushButton("Để sau")
+
+        # Style
+        self.btn_update.setStyleSheet("""
+            QPushButton {
+                background-color: #28a745;
+                color: white;
+                padding: 8px 18px;
+                border-radius: 6px;
+                font-size: 12pt;
+            }
+            QPushButton:hover {
+                background-color: #218838;
+            }
+        """)
+
+        self.btn_later.setStyleSheet("""
+            QPushButton {
+                background-color: #cccccc;
+                color: black;
+                padding: 8px 18px;
+                border-radius: 6px;
+                font-size: 12pt;
+            }
+            QPushButton:hover {
+                background-color: #b6b6b6;
+            }
+        """)
+
+        btn_layout.addWidget(self.btn_update)
+        btn_layout.addWidget(self.btn_later)
+        layout.addLayout(btn_layout)
+
+        self.setLayout(layout)
+
+        # ---- SIGNALS ----
+        self.btn_update.clicked.connect(self.accept)
+        self.btn_later.clicked.connect(self.reject)
 
     def exec_(self):
         result = super().exec_()
-        clicked = self.clickedButton()
-        if clicked == self.update_btn:
+        if result == QDialog.Accepted:
             return "update"
-        else:
-            return "later"
+        return "later"
 
 
 class MainWindow(QMainWindow):
@@ -200,11 +329,21 @@ class MainWindow(QMainWindow):
         self.processing_thread = None
         self.detail_results_text = ""
         self.init_ui()
+        self.check_update_on_start()
+
+    def check_update_on_start(self):
+        """Kiểm tra cập nhật ngay khi app mở"""
+        has_update, url, ver = check_for_update()
+        if has_update and url:
+            dialog = UpdateDialog(ver, url, self)
+            choice = dialog.exec_()
+            if choice == "update":
+                download_and_update(url)    
         
     def init_ui(self):
         """Khởi tạo giao diện"""
         # ... (phần code UI cũ giữ nguyên) ...
-        self.setWindowTitle("DOCX to XML Converter - Công cụ chuyển đổi câu hỏi")
+        self.setWindowTitle("Công cụ chuyển đổi file docx sang XML")
         self.setGeometry(100, 100, 1000, 700)
         
         # Widget chính

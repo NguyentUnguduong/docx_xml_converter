@@ -46,5 +46,5 @@ jobs:
           files: |
             dist/Convert_XML.exe
             dist/app.zip
-        env:
-          GITHUB_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}
+          token: ${{ secrets.MY_GITHUB_TOKEN }}   # <- phải ở đây, không ở env
+          overwrite_files: true

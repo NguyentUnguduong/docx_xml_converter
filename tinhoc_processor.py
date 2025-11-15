@@ -198,7 +198,16 @@ class TinHocProcessor:
         each_question_xml.append(content_question)
         
         # Process choices A B C D
-        index_answer = self.list_answers_tn_tinhoc(content_q[1], cau_sau_xu_ly[1][0], each_question_xml, doc)
+        # index_answer = self.list_answers_tn_tinhoc(content_q[1], cau_sau_xu_ly[1][0], each_question_xml, doc)
+
+        if not cau_sau_xu_ly[1]:
+            # Không có lời giải → xử lý mặc định hoặc báo lỗi
+            # Ví dụ: coi như không có đáp án đúng
+            index_answer = []
+            # Tạo listanswers rỗng nếu cần
+            listanswers = ET.SubElement(each_question_xml, 'listanswers')
+        else:
+            index_answer = self.list_answers_tn_tinhoc(content_q[1], cau_sau_xu_ly[1][0], each_question_xml, doc)
         
         # Process explanation
         array_hdg = []

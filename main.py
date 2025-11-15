@@ -17,6 +17,7 @@ from PyQt5.QtGui import QFont, QIcon
 import traceback
 import requests
 from packaging import version
+import json
 
 from docx_processor import DocxProcessor # Import lớp đã cập nhật
 
@@ -99,21 +100,47 @@ class ProcessingThread(QThread):
             self.finished.emit(False, f"❌ Lỗi nghiêm trọng trong thread: {str(e)}", {})
 
 
-CURRENT_VERSION = "1.0.0"  # <-- Bạn tự cập nhật mỗi lần release
+# CURRENT_VERSION = "1.0.0"  # <-- Bạn tự cập nhật mỗi lần release
+# CURRENT_VERSION = get_current_version()
 GITHUB_REPO = "NguyentUnguduong/docx_xml_converter"  # Ví dụ: "nguyenvanA/my-docx-xml-converter"
 
-def check_for_update():
-    """Kiểm tra cập nhật từ GitHub Releases. Trả về (has_update, download_url, latest_ver)"""
+def get_current_version():
+    """Đọc version hiện tại từ file version.json"""
     try:
+        if getattr(sys, "frozen", False):
+            base_path = os.path.dirname(sys.executable)
+        else:
+            base_path = os.path.dirname(__file__)
+        version_file = os.path.join(base_path, "version.json")
+        if not os.path.exists(version_file):
+            return "0.0.0"
+        with open(version_file, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        return data.get("version", "0.0.0")
+    except Exception:
+        return "0.0.0"
+    
+def update_local_version(new_version):
+    """Cập nhật version mới vào version.json"""
+    try:
+        if getattr(sys, "frozen", False):
+            base_path = os.path.dirname(sys.executable)
+        else:
+            base_path = os.path.dirname(__file__)
+        version_file = os.path.join(base_path, "version.json")
+        with open(version_file, "w", encoding="utf-8") as f:
+            json.dump({"version": new_version}, f)
+    except Exception as e:
+        print(f"Không thể cập nhật version local: {e}")    
+
+def check_for_update():
+    """Kiểm tra update từ GitHub, trả về (has_update, exe_url, latest_ver)"""
+    try:
+        CURRENT_VERSION = get_current_version()
         url = f"https://api.github.com/repos/{GITHUB_REPO}/releases/latest"
         response = requests.get(url, timeout=10)
-
-        print("RAW RESPONSE:", response.text)  # In ra phản hồi thô để kiểm tra
-        # if response.status_code != 200:
-        #     return False, None, None
-
         data = response.json()
-        latest_tag = data.get("tag_name", "0.0.0").lstrip("vV")  # Loại bỏ 'v' nếu có
+        latest_tag = data.get("tag_name", "0.0.0").lstrip("vV")
         assets = data.get("assets", [])
 
         # Tìm file .exe trong assets
@@ -124,21 +151,19 @@ def check_for_update():
                 break
 
         if not exe_url:
-            return False, None, None
+            return False, None, latest_tag
 
         if version.parse(latest_tag) > version.parse(CURRENT_VERSION):
             return True, exe_url, latest_tag
-        else:
-            return False, None, latest_tag
-
+        return False, None, latest_tag
     except Exception:
         return False, None, None
 
 
-def download_and_update(download_url):
-    """Tải file exe mới và thay thế, sau đó khởi động lại"""
+def download_and_update(download_url, latest_version):
+    """Tải file exe mới, thay thế, ghi version.json và restart app"""
     try:
-        # Tải file vào thư mục tạm
+        # Tải file vào temp
         temp_dir = tempfile.gettempdir()
         new_exe = os.path.join(temp_dir, "updated_app.exe")
 
@@ -150,52 +175,22 @@ def download_and_update(download_url):
 
         if not getattr(sys, "frozen", False):
             QMessageBox.warning(None, "Không thể cập nhật",
-                                "Chức năng cập nhật chỉ hoạt động khi chạy file .exe đã đóng gói.\n"
-                                "Bạn đang chạy bằng Python nên không thể cập nhật.")
+                                "Cập nhật chỉ hoạt động khi chạy file .exe đã đóng gói.")
             return False
-        # Lấy đường dẫn exe hiện tại
+
         current_exe = sys.executable
         exe_name = os.path.basename(current_exe).lower()
 
-        # Danh sách tên file Python hệ thống / môi trường cấm xóa
-        forbidden_exes = [
-            "python.exe",
-            "pythonw.exe",
-            "python310.exe",
-            "python311.exe",
-            "python312.exe",
-            "python313.exe"
-        ]
-
-        forbidden_paths = [
-            os.path.expandvars(r"%LOCALAPPDATA%\Programs\Python").lower(),
-            r"C:\Program Files\Python".lower(),
-            r"C:\Program Files (x86)\Python".lower()
-        ]
-
+        # Kiểm tra exe nhạy cảm
+        forbidden_exes = ["python.exe", "pythonw.exe"]
         if exe_name in forbidden_exes:
-            QMessageBox.critical(
-                None,
-                "Cảnh báo",
-                f"File hiện tại '{exe_name}' là môi trường Python hệ thống.\n"
-                "Không thể cập nhật từ đây để tránh phá hủy môi trường Python."
-            )
+            QMessageBox.critical(None, "Cảnh báo",
+                                 f"Không thể cập nhật từ {exe_name}")
             return False
-        
-        current_exe_lower = current_exe.lower()
-        for path in forbidden_paths:
-            if current_exe_lower.startswith(path):
-                QMessageBox.critical(
-                    None,
-                    "Cảnh báo",
-                    f"File hiện tại đang nằm trong thư mục Python hệ thống:\n{current_exe}\n"
-                    "Không thể cập nhật từ đây."
-                )
-                return False
 
-        # Tạo script batch để xóa exe cũ và đổi tên mới (trên Windows)
+        # Tạo batch script xóa exe cũ và replace
         bat_script = os.path.join(temp_dir, "update.bat")
-        with open(bat_script, "w") as bat:
+        with open(bat_script, "w", encoding="utf-8") as bat:
             bat.write(f'''
 @echo off
 timeout /t 2 /nobreak >nul
@@ -204,36 +199,16 @@ move "{new_exe}" "{current_exe}"
 start "" "{current_exe}"
 ''')
 
-        # Chạy batch script và thoát app
+        # Ghi version.json mới
+        update_local_version(latest_version)
+
+        # Chạy batch và thoát app
         subprocess.Popen([bat_script], shell=True)
         sys.exit(0)
 
     except Exception as e:
         QMessageBox.critical(None, "Lỗi cập nhật", f"Không thể cập nhật:\n{str(e)}")
         return False
-
-
-# class UpdateDialog(QMessageBox):
-#     def __init__(self, latest_version, download_url, parent=None):
-#         super().__init__(parent)
-#         self.setWindowTitle("Có bản cập nhật mới!")
-#         self.setText(f"Đã có phiên bản mới: v{latest_version}\nPhiên bản hiện tại: v{CURRENT_VERSION}")
-#         self.setInformativeText("Bạn có muốn cập nhật ngay không?")
-#         self.setIcon(QMessageBox.Information)
-        
-#         self.update_btn = self.addButton("Cập nhật", QMessageBox.AcceptRole)
-#         self.later_btn = self.addButton("Để sau", QMessageBox.RejectRole)
-#         self.setDefaultButton(self.update_btn)
-        
-#         self.download_url = download_url
-
-#     def exec_(self):
-#         result = super().exec_()
-#         clicked = self.clickedButton()
-#         if clicked == self.update_btn:
-#             return "update"
-#         else:
-#             return "later"
 
 class UpdateDialog(QDialog):
     def __init__(self, current_version, latest_version, download_url, parent=None):
@@ -333,12 +308,16 @@ class MainWindow(QMainWindow):
 
     def check_update_on_start(self):
         """Kiểm tra cập nhật ngay khi app mở"""
-        has_update, url, ver = check_for_update()
-        if has_update and url:
-            dialog = UpdateDialog(ver, url, self)
-            choice = dialog.exec_()
-            if choice == "update":
-                download_and_update(url)    
+        try:
+            current_version = get_current_version()
+            has_update, url, latest_ver = check_for_update()
+            if has_update and url:
+                dialog = UpdateDialog(current_version, latest_ver, url, self)
+                choice = dialog.exec_()
+                if choice == "update":
+                    download_and_update(url, latest_ver)
+        except Exception as e:
+            print(f"Lỗi khi kiểm tra cập nhật: {e}")
         
     def init_ui(self):
         """Khởi tạo giao diện"""

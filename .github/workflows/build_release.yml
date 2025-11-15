@@ -33,7 +33,7 @@ jobs:
       # --- Build EXE ---
       - name: Build EXE with PyInstaller
         run: |
-          pyinstaller --clean --noconfirm --onefile --windowed --add-data "*.py;." --name Convert_XML main.py
+          pyinstaller --clean --noconfirm --onefile --windowed --add-data "*.py;." --add-data "version.json;." --name Convert_XML main.py
 
       # --- Zip output file ---
       - name: Zip build

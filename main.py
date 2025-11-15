@@ -104,35 +104,39 @@ class ProcessingThread(QThread):
 # CURRENT_VERSION = get_current_version()
 GITHUB_REPO = "NguyentUnguduong/docx_xml_converter"  # Ví dụ: "nguyenvanA/my-docx-xml-converter"
 
-def get_current_version():
-    """Đọc version hiện tại từ file version.json"""
-    try:
-        if getattr(sys, "frozen", False):
-            base_path = os.path.dirname(sys.executable)
-        else:
-            base_path = os.path.dirname(__file__)
-        version_file = os.path.join(base_path, "version.json")
-        if not os.path.exists(version_file):
-            return "0.0.0"
-        with open(version_file, "r", encoding="utf-8") as f:
-            data = json.load(f)
-        return data.get("version", "0.0.0")
-    except Exception:
-        return "0.0.0"
-    
-def update_local_version(new_version):
-    """Cập nhật version mới vào version.json"""
-    try:
-        if getattr(sys, "frozen", False):
-            base_path = os.path.dirname(sys.executable)
-        else:
-            base_path = os.path.dirname(__file__)
-        version_file = os.path.join(base_path, "version.json")
-        with open(version_file, "w", encoding="utf-8") as f:
-            json.dump({"version": new_version}, f)
-    except Exception as e:
-        print(f"Không thể cập nhật version local: {e}")    
+def get_version_file_path():
+    """Trả về đường dẫn tới version.json đúng vị trí"""
+    if getattr(sys, "frozen", False):
+        # Nếu là exe
+        base_path = os.path.dirname(sys.executable)
+    else:
+        # Nếu chạy từ Python
+        base_path = os.path.dirname(os.path.abspath(__file__))
+    return os.path.join(base_path, "version.json")
 
+def get_current_version():
+    """Đọc version hiện tại từ version.json"""
+    version_file = get_version_file_path()
+    try:
+        if os.path.exists(version_file):
+            with open(version_file, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            return data.get("version", "0.0.0")
+        else:
+            return "0.0.0"
+    except Exception as e:
+        print(f"Lỗi đọc version.json: {e}")
+        return "0.0.0"
+
+def update_local_version(new_version):
+    """Ghi version mới vào version.json cùng thư mục với exe hoặc main.py"""
+    version_file = get_version_file_path()
+    try:
+        with open(version_file, "w", encoding="utf-8") as f:
+            json.dump({"version": new_version}, f, ensure_ascii=False, indent=4)
+    except Exception as e:
+        print(f"Lỗi ghi version.json: {e}")
+        
 def check_for_update():
     """Kiểm tra update từ GitHub, trả về (has_update, exe_url, latest_ver)"""
     try:

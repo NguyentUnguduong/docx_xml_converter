@@ -13,6 +13,8 @@ jobs:
       # --- Clone source ---
       - name: Checkout code
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Lấy toàn bộ lịch sử để có thể truy cập tag
 
       # --- Cài Python ---
       - name: Set up Python
@@ -30,7 +32,7 @@ jobs:
       # --- Build EXE ---
       - name: Build EXE with PyInstaller
         run: |
-          pyinstaller --noconfirm --onefile --windowed --add-data "*.py;." --name Convert_XML main.py
+          pyinstaller --clean --noconfirm --onefile --windowed --add-data "*.py;." --name Convert_XML main.py
 
       # --- Zip output file ---
       - name: Zip build
@@ -45,4 +47,4 @@ jobs:
             dist/Convert_XML.exe
             dist/app.zip
         env:
-          MY_GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITHUB_TOKEN: ${{ secrets.MY_GITHUB_TOKEN }}

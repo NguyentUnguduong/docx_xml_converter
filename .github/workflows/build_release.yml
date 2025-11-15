@@ -35,7 +35,7 @@ jobs:
       # --- Zip output file ---
       - name: Zip build
         run: |
-          powershell Compress-Archive -Path "dist\main.exe" -DestinationPath "dist\app.zip" -Force
+          powershell Compress-Archive -Path "dist\Convert_XML.exe" -DestinationPath "dist\app.zip" -Force
 
       # --- Upload to Release ---
       - name: Upload EXE to Release

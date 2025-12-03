@@ -20,6 +20,7 @@ from PIL import Image
 from io import BytesIO
 from bs4 import BeautifulSoup
 
+
 # Giả sử TinHocProcessor chưa được định nghĩa, ta tạo một lớp giả lập
 # hoặc đảm bảo nó có thể được import. Nếu không, bỏ qua phần xử lý Tin học.
 # class TinHocProcessor:
@@ -49,7 +50,7 @@ class DocxProcessor:
             "LICHSUTHPT", "DIALITHPT", "GDCDTHPT2", "NGUVANTHPT",
             "TOANTHCS2", "KHTN", "KHXHTHCS", "GDCDTHCS2", "NGUVANTHCS2", "DGNLDHQGHN"
         ]
-        self.tinhoc_subjects = ['TINHOC', 'TINHOCTHCS', 'TINHOCTHPT', 'TINHOC3']
+        self.tinhoc_subjects = ['TINHOCTHPT', 'TINHOC3']
         self.index_question = 0
         self.tinhoc_processor = TinHocProcessor()
         self.nsmap = {
@@ -115,16 +116,7 @@ class DocxProcessor:
                     'questions': []
                 }
                 # Kiểm tra trùng lặp
-                is_duplicate = any(
-                    g['subject'] == group['subject'] and
-                    g['tag'] == group['tag'] and
-                    g['posttype'] == group['posttype'] and
-                    g['knowledgelevel'] == group['knowledgelevel']
-                    for g in group_of_questions
-                )
-                if not is_duplicate:
-                    group_of_questions.append(group)
-                continue
+                group_of_questions.append(group)
             # Phát hiện học liệu
             if text.startswith('HL:'):
                 if list_hl:
@@ -602,6 +594,7 @@ class DocxProcessor:
             import traceback; traceback.print_exc()
             return None
 
+
     def protocol_of_q(self, question, each_question_xml, subject, errors, question_index):
         """Phân tích cấu trúc câu hỏi, nhận danh sách errors và số thứ tự câu hỏi question_index"""
         # Chia thành phần: nội dung câu hỏi và lời giải
@@ -612,7 +605,8 @@ class DocxProcessor:
                 continue
             if isinstance(para, Paragraph):
                 text = para.text.strip().lower()
-                if re.match(r'^l[ờờ]i gi[ảả]i', text):
+                # if re.match(r'^l[ờờ]i gi[ảả]i', text):
+                if re.match(r'^\s*l[ờơ]i\s+gi[ảẩ]i\s*[:：]?', text, re.IGNORECASE):
                     thanh_phan_1q.append([])
                     continue
             if thanh_phan_1q:
@@ -907,6 +901,12 @@ class DocxProcessor:
         # ===== 4️⃣ Gọi hdg_tn() để xử lý phần giải thích chi tiết =====
         self.hdg_tn(cau_sau_xu_ly[1] if len(cau_sau_xu_ly) > 1 else None, xml)
 
+
+    
+
+
+
+    # Xử lý phức tạp
     # def dang_tn(self, cau_sau_xu_ly, xml, audio):
     #     """
     #     Xử lý dạng Trắc nghiệm (typeAnswer=0, template=0)
@@ -1173,29 +1173,61 @@ class DocxProcessor:
         # ===== RAW HTML =====
         raw_html = self.convert_b4_add(cau_sau_xu_ly[0])
         raw_html = re.sub(r'<br\s*/?>', '<br/>', raw_html)
+        lines = [ln.strip() for ln in raw_html.split('<br/>') if ln.strip()]
 
-        # Tách dòng
-        lines = [ln.strip() for ln in raw_html.split('<br/>')]
+        if not lines:
+            lines = ['']
 
         # ===== TITLE =====
-        current_title_txt = lines[0] if lines else ''
-        text_plain = BeautifulSoup(current_title_txt, 'html.parser').get_text().strip()
+        current_title_txt = lines[0]
+        title_plain = BeautifulSoup(
+            re.sub(r'^C[âa]u\s*\d+[\.:]\s*', '', current_title_txt, flags=re.IGNORECASE).strip(),
+            'html.parser'
+        ).get_text().strip()
 
-        title_clean = re.sub(r'^C[âa]u\s*\d+[\.:]\s*', '', current_title_txt, flags=re.IGNORECASE).strip()
-        title_plain = BeautifulSoup(title_clean, 'html.parser').get_text().strip()
-
-        final_title = title_clean if len(title_plain) > 1 else ''
-
-        # Tự sinh tiêu đề nếu không có
-        if not final_title and subject in self.subjects_with_default_titles:
+        final_title = ''
+        if title_plain:
+            final_title = re.sub(r'^C[âa]u\s*\d+[\.:]\s*', '', current_title_txt, flags=re.IGNORECASE).strip()
+        else:
             found_answers = re.findall(r'\[\[(.*?)\]\]', raw_html)
             all_ans = ''.join(found_answers)
-            if any(c.isalpha() for c in all_ans):
-                final_title = 'Điền đáp án thích hợp vào ô trống'
-            else:
-                final_title = 'Điền đáp án thích hợp vào ô trống (chỉ sử dụng chữ số, dấu ",", và dấu "-")'
+            if subject in getattr(self, 'subjects_with_default_titles', set()):
+                if any(c.isalpha() for c in all_ans):
+                    final_title = 'Điền đáp án thích hợp vào ô trống'
+                else:
+                    final_title = 'Điền đáp án thích hợp vào ô trống (chỉ sử dụng chữ số, dấu ",", và dấu "-")'
 
-        # ===== START contentquestion =====
+        # ===== XÁC ĐỊNH PHẦN NỘI DUNG CHÍNH VÀ PHẦN ĐÁP ÁN =====
+        # Tìm vị trí dòng đầu tiên chứa [[...]]
+        answer_start_idx = None
+        for i, line in enumerate(lines):
+            if '[[' in line and ']]' in line:
+                answer_start_idx = i
+                break
+
+        if answer_start_idx is None:
+            # Không có đáp án? => Toàn bộ sau tiêu đề là nội dung
+            content_lines = lines[1:]
+            answer_lines = []
+        else:
+            content_lines = lines[1:answer_start_idx]  # Nội dung thuần túy
+            answer_lines = lines[answer_start_idx:]    # Dòng chứa "[[...]]" trở đi
+
+        # Ghép lại nội dung và đáp án
+        content_html = '<br/>'.join(content_lines).strip()
+        answer_html_raw = '<br/>'.join(answer_lines).strip()
+
+        # ===== XỬ LÝ ĐÁP ÁN: thay [[...]] bằng input + giữ nguyên văn bản xung quanh =====
+        input_index = 0
+        def repl(match):
+            nonlocal input_index
+            input_index += 1
+            return (f'<span class="ans-span-second"></span>'
+                    f'<input class="can-resize-second" type="text" id="mathplay-answer-{input_index}">')
+        
+        answer_html_processed = re.sub(r'\[\[(.*?)\]\]', repl, answer_html_raw)
+
+        # ===== BUILD XML =====
         cq = SubElement(xml, 'contentquestion')
 
         # --- title ---
@@ -1204,55 +1236,44 @@ class DocxProcessor:
             title_div.set('class', 'title')
             title_div.text = final_title
 
-        # --- content luôn rỗng (theo GAS) ---
-        empty_content = SubElement(cq, 'div')
-        empty_content.set('class', 'content')
+        # --- content (không chứa "Đáp án:", không chứa input) ---
+        content_div = SubElement(cq, 'div')
+        content_div.set('class', 'content')
+        content_div.text = content_html
 
-        # ===== EXTRACT ĐÁP ÁN + THAY INPUT =====
-        input_index = 0
-
-        def repl(match):
-            nonlocal input_index
-            input_index += 1
-            return (f'<span class="ans-span-second"></span>'
-                    f'<input class="can-resize-second" type="text" id="mathplay-answer-{input_index}">')
-
-        body_lines = lines[1:] if len(lines) > 1 else []
-        body_html = '<br/>'.join(body_lines)
-
-        body_with_inputs = re.sub(r'\[\[(.*?)\]\]', repl, body_html)
-
-        # ===== ANSWER-INPUT =====
-        ans_block = SubElement(cq, 'div')
-        ans_block.set('class', 'answer-input')
-
-        line_block = SubElement(ans_block, 'div')
-        line_block.set('class', 'line')
-        line_block.text = body_with_inputs
+        # --- answer-input (chỉ chứa phần sau "Đáp án: ...") ---
+        if answer_html_processed:
+            ans_block = SubElement(cq, 'div')
+            ans_block.set('class', 'answer-input')
+            line_block = SubElement(ans_block, 'div')
+            line_block.set('class', 'line')
+            line_block.text = answer_html_processed
 
         # ===== LIST ANSWERS =====
         found_answers = re.findall(r'\[\[(.*?)\]\]', raw_html)
         dap_an_dt = [a.strip() for a in found_answers if a.strip()]
-
         listanswers = SubElement(xml, 'listanswers')
         for i, ans in enumerate(dap_an_dt):
             ans_clean = ans.replace('‘', "'").replace('’', "'").replace('|', '[-]')
-
             ans_tag = SubElement(listanswers, 'answer')
             SubElement(ans_tag, 'index').text = str(i)
             SubElement(ans_tag, 'content').text = ans_clean
             SubElement(ans_tag, 'isanswer').text = 'TRUE'
 
         # ===== EXPLAIN =====
-        hdg_html = self.convert_b4_add(cau_sau_xu_ly[1][0])
-        hdg_html = re.sub(r'#+', '', hdg_html)
-        hdg_plain = BeautifulSoup(hdg_html, 'html.parser').get_text().strip()
-
-        exp = SubElement(xml, 'explainquestion')
-        if len(hdg_plain) > 4:
-            exp.text = hdg_html
+        if len(cau_sau_xu_ly) > 1 and isinstance(cau_sau_xu_ly[1], list) and cau_sau_xu_ly[1]:
+            hdg_html = self.convert_b4_add(cau_sau_xu_ly[1][0])
+            hdg_html = re.sub(r'#+', '', hdg_html)
+            hdg_plain = BeautifulSoup(hdg_html, 'html.parser').get_text().strip()
+            exp = SubElement(xml, 'explainquestion')
+            if len(hdg_plain) > 4:
+                exp.text = hdg_html
+            else:
+                exp.text = f"Đáp án đúng theo thứ tự là: {', '.join(dap_an_dt)}"
         else:
+            exp = SubElement(xml, 'explainquestion')
             exp.text = f"Đáp án đúng theo thứ tự là: {', '.join(dap_an_dt)}"
+
 
 
     def dang_tl(self, cau_sau_xu_ly, xml, audio):

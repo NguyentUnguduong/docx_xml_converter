@@ -3,50 +3,51 @@ name: Build & Upload PyInstaller EXE to Release
 on:
   push:
     tags:
-      - 'v*.*.*'   # Mỗi lần push tag như v1.0.1 sẽ tự build release
+      - 'v*.*.*'
 
 jobs:
   build:
     runs-on: windows-latest
 
     steps:
-      # --- Clone source ---
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          fetch-depth: 0  # Lấy toàn bộ lịch sử để có thể truy cập tag
+          fetch-depth: 0
 
-      # --- Cài Python ---
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: "3.11"
 
-      # --- Install dependencies ---
       - name: Install requirements
         run: |
           python -m pip install --upgrade pip wheel
-          pip install "setuptools<66" 
+          pip install "setuptools<66"       # FIX QUAN TRỌNG NHẤT
           pip install -r requirements.txt
-          pip install pyinstaller
           pip install PyQt5==5.15.9
+          pip install pyinstaller==6.10.0
 
-      # --- Build EXE ---
       - name: Build EXE with PyInstaller
         run: |
-          pyinstaller --clean --noconfirm --onefile --collect-metadata "packaging" --collect-metadata "importlib_metadata"  --windowed --add-data "document_element.py;." --add-data "docx_processor.py;." --add-data "tinhoc_processor.py;." --name Convert_XML main.py
+          pyinstaller --clean --noconfirm --onefile ^
+            --collect-metadata "packaging" ^
+            --collect-metadata "importlib_metadata" ^
+            --windowed ^
+            --add-data "document_element.py;." ^
+            --add-data "docx_processor.py;." ^
+            --add-data "tinhoc_processor.py;." ^
+            --name Convert_XML main.py
 
-      # --- Zip output file ---
       - name: Zip build
         run: |
           powershell Compress-Archive -Path "dist\Convert_XML.exe" -DestinationPath "dist\app.zip" -Force
 
-      # --- Upload to Release ---
       - name: Upload EXE to Release
         uses: softprops/action-gh-release@v2
         with:
           files: |
             dist/Convert_XML.exe
             dist/app.zip
-          token: ${{ secrets.MY_GITHUB_TOKEN }}   # <- phải ở đây, không ở env
+          token: ${{ secrets.MY_GITHUB_TOKEN }}
           overwrite_files: true

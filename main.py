@@ -397,9 +397,10 @@ class UpdateDialog(QDialog):
         bat_script = os.path.join(update_folder, "update.bat")
         log_file = os.path.join(update_folder, "update.log")
 
-        # Tạo nội dung batch an toàn
+        # Tạo nội dung batch an toàn + có taskkill + kiểm tra lỗi
         bat_content = fr'''@echo off
     chcp 65001 >nul
+
     set "LOGFILE={log_file}"
     set "UPDATE_FOLDER={update_folder}"
     set "CURRENT_EXE={current_exe}"
@@ -410,31 +411,34 @@ class UpdateDialog(QDialog):
     echo Current EXE: %CURRENT_EXE% >> "%LOGFILE%"
     echo New EXE: %NEW_EXE% >> "%LOGFILE%"
 
-    :: Đợi 5 giây để đảm bảo app cũ hoàn toàn thoát
-    timeout /t 5 /nobreak >nul
+    :: Bước 1: Đóng ứng dụng (nếu còn chạy)
+    echo [INFO] Forcing close current application... >> "%LOGFILE%"
+    taskkill /F /IM "{os.path.basename(current_exe)}" >nul 2>&1
+    timeout /t 3 /nobreak >nul
 
-    :: Thử xóa file cũ — nếu fail thì ghi log và tiếp tục
+    :: Bước 2: Xóa file cũ (nếu tồn tại)
     echo [INFO] Deleting old EXE... >> "%LOGFILE%"
     del /f /q "%CURRENT_EXE%" >> "%LOGFILE%" 2>&1
 
-    :: Di chuyển file mới vào vị trí
+    :: Bước 3: Di chuyển file mới vào vị trí cũ
     echo [INFO] Moving new EXE into place... >> "%LOGFILE%"
     move /y "%NEW_EXE%" "%CURRENT_EXE%" >> "%LOGFILE%" 2>&1
 
-    :: Kiểm tra file mới tồn tại
+    :: Bước 4: Kiểm tra file mới có tồn tại không
     if not exist "%CURRENT_EXE%" (
-        echo [ERROR] Failed to replace EXE! >> "%LOGFILE%"
+        echo [ERROR] Failed to replace EXE! File not found. >> "%LOGFILE%"
+        echo [ERROR] Please run the new EXE manually from: %NEW_EXE% >> "%LOGFILE%"
         pause
         exit /b 1
     )
 
     echo [SUCCESS] EXE replaced successfully. >> "%LOGFILE%"
 
-    :: Khởi động lại app — dùng start để tách tiến trình
+    :: Bước 5: Khởi động lại ứng dụng
     echo [INFO] Restarting application... >> "%LOGFILE%"
     start "" "%CURRENT_EXE%" >> "%LOGFILE%" 2>&1
 
-    :: Dọn dẹp sau 10 giây — tránh lock
+    :: Bước 6: Dọn dẹp thư mục cập nhật sau 10 giây (chạy nền)
     echo [INFO] Scheduling cleanup... >> "%LOGFILE%"
     (
         timeout /t 10 /nobreak >nul
@@ -451,12 +455,84 @@ class UpdateDialog(QDialog):
             # Đảm bảo app hiện tại thoát hoàn toàn
             self.accept()  # Đóng dialog
             QApplication.quit()  # Đóng Qt
-            # DÙNG subprocess.Popen để chạy batch, rồi exit
+            # Chạy batch script độc lập
             subprocess.Popen([bat_script], shell=True, creationflags=subprocess.CREATE_NEW_CONSOLE)
             sys.exit(0)  # Thoát hoàn toàn
 
         except Exception as e:
-            self.show_error(f"Không thể áp dụng cập nhật:\n{str(e)}")
+            self.show_error(f"Không thể áp dụng cập nhật:\n{str(e)}")    
+
+    # def on_download_finished(self, file_path):
+    #     self.status_label.setText("Đang áp dụng cập nhật...")
+
+    #     # Ghi version mới
+    #     self.update_local_version(self.latest_version)
+
+    #     current_exe = sys.executable
+    #     update_folder = self.update_folder
+    #     bat_script = os.path.join(update_folder, "update.bat")
+    #     log_file = os.path.join(update_folder, "update.log")
+
+    #     # Tạo nội dung batch an toàn
+    #     bat_content = fr'''@echo off
+    # chcp 65001 >nul
+    # set "LOGFILE={log_file}"
+    # set "UPDATE_FOLDER={update_folder}"
+    # set "CURRENT_EXE={current_exe}"
+    # set "NEW_EXE={file_path}"
+
+    # echo =============================== >> "%LOGFILE%"
+    # echo Update process started at %date% %time% >> "%LOGFILE%"
+    # echo Current EXE: %CURRENT_EXE% >> "%LOGFILE%"
+    # echo New EXE: %NEW_EXE% >> "%LOGFILE%"
+
+    # :: Đợi 5 giây để đảm bảo app cũ hoàn toàn thoát
+    # timeout /t 5 /nobreak >nul
+
+    # :: Thử xóa file cũ — nếu fail thì ghi log và tiếp tục
+    # echo [INFO] Deleting old EXE... >> "%LOGFILE%"
+    # del /f /q "%CURRENT_EXE%" >> "%LOGFILE%" 2>&1
+
+    # :: Di chuyển file mới vào vị trí
+    # echo [INFO] Moving new EXE into place... >> "%LOGFILE%"
+    # move /y "%NEW_EXE%" "%CURRENT_EXE%" >> "%LOGFILE%" 2>&1
+
+    # :: Kiểm tra file mới tồn tại
+    # if not exist "%CURRENT_EXE%" (
+    #     echo [ERROR] Failed to replace EXE! >> "%LOGFILE%"
+    #     pause
+    #     exit /b 1
+    # )
+
+    # echo [SUCCESS] EXE replaced successfully. >> "%LOGFILE%"
+
+    # :: Khởi động lại app — dùng start để tách tiến trình
+    # echo [INFO] Restarting application... >> "%LOGFILE%"
+    # start "" "%CURRENT_EXE%" >> "%LOGFILE%" 2>&1
+
+    # :: Dọn dẹp sau 10 giây — tránh lock
+    # echo [INFO] Scheduling cleanup... >> "%LOGFILE%"
+    # (
+    #     timeout /t 10 /nobreak >nul
+    #     rmdir /s /q "%UPDATE_FOLDER%" >nul 2>&1
+    # ) >nul 2>&1 &
+
+    # exit
+    # '''
+
+    #     try:
+    #         with open(bat_script, "w", encoding="utf-8-sig") as f:
+    #             f.write(bat_content)
+
+    #         # Đảm bảo app hiện tại thoát hoàn toàn
+    #         self.accept()  # Đóng dialog
+    #         QApplication.quit()  # Đóng Qt
+    #         # DÙNG subprocess.Popen để chạy batch, rồi exit
+    #         subprocess.Popen([bat_script], shell=True, creationflags=subprocess.CREATE_NEW_CONSOLE)
+    #         sys.exit(0)  # Thoát hoàn toàn
+
+    #     except Exception as e:
+    #         self.show_error(f"Không thể áp dụng cập nhật:\n{str(e)}")
 
     def on_download_error(self, error_msg):
         self.show_error(f"Lỗi khi tải cập nhật:\n{error_msg}")

@@ -397,7 +397,7 @@ class UpdateDialog(QDialog):
         bat_script = os.path.join(update_folder, "update.bat")
         log_file = os.path.join(update_folder, "update.log")
 
-        # Ghi nội dung batch an toàn hơn, tránh lỗi encoding và lock
+        # Tạo nội dung batch an toàn
         bat_content = fr'''@echo off
     chcp 65001 >nul
     set "LOGFILE={log_file}"
@@ -410,20 +410,18 @@ class UpdateDialog(QDialog):
     echo Current EXE: %CURRENT_EXE% >> "%LOGFILE%"
     echo New EXE: %NEW_EXE% >> "%LOGFILE%"
 
-    :: Đợi 3 giây để ứng dụng chính hoàn toàn thoát
-    timeout /t 3 /nobreak >nul
+    :: Đợi 5 giây để đảm bảo app cũ hoàn toàn thoát
+    timeout /t 5 /nobreak >nul
 
-    :: Ghi log trước khi xóa
-    echo [INFO] Attempting to delete current EXE... >> "%LOGFILE%"
-
-    :: Thử xóa EXE cũ — có thể thất bại nếu vẫn bị lock, nhưng thường sau timeout sẽ ok
+    :: Thử xóa file cũ — nếu fail thì ghi log và tiếp tục
+    echo [INFO] Deleting old EXE... >> "%LOGFILE%"
     del /f /q "%CURRENT_EXE%" >> "%LOGFILE%" 2>&1
 
     :: Di chuyển file mới vào vị trí
     echo [INFO] Moving new EXE into place... >> "%LOGFILE%"
     move /y "%NEW_EXE%" "%CURRENT_EXE%" >> "%LOGFILE%" 2>&1
 
-    :: Kiểm tra xem file mới có tồn tại không
+    :: Kiểm tra file mới tồn tại
     if not exist "%CURRENT_EXE%" (
         echo [ERROR] Failed to replace EXE! >> "%LOGFILE%"
         pause
@@ -432,14 +430,14 @@ class UpdateDialog(QDialog):
 
     echo [SUCCESS] EXE replaced successfully. >> "%LOGFILE%"
 
-    :: Khởi động lại app
+    :: Khởi động lại app — dùng start để tách tiến trình
     echo [INFO] Restarting application... >> "%LOGFILE%"
     start "" "%CURRENT_EXE%" >> "%LOGFILE%" 2>&1
 
-    :: Dọn dẹp sau 5 giây bằng một tiến trình riêng
+    :: Dọn dẹp sau 10 giây — tránh lock
     echo [INFO] Scheduling cleanup... >> "%LOGFILE%"
     (
-        timeout /t 5 /nobreak >nul
+        timeout /t 10 /nobreak >nul
         rmdir /s /q "%UPDATE_FOLDER%" >nul 2>&1
     ) >nul 2>&1 &
 
@@ -447,18 +445,15 @@ class UpdateDialog(QDialog):
     '''
 
         try:
-            # Ghi file với encoding UTF-8 không BOM
             with open(bat_script, "w", encoding="utf-8-sig") as f:
                 f.write(bat_content)
 
-            # Đảm bảo app chính đã hoàn toàn thoát (nên gọi sys.exit sau khi mở batch)
-            # Chạy batch script **độc lập**, không giữ handle
-            subprocess.Popen([bat_script], shell=True, close_fds=True)
-            
-            # THOÁT ỨNG DỤNG NGAY SAU KHI GỌI BATCH
-            self.accept()
-            QApplication.quit()  # Thay vì sys.exit(0) — an toàn hơn trong Qt
-            sys.exit(0)
+            # Đảm bảo app hiện tại thoát hoàn toàn
+            self.accept()  # Đóng dialog
+            QApplication.quit()  # Đóng Qt
+            # DÙNG subprocess.Popen để chạy batch, rồi exit
+            subprocess.Popen([bat_script], shell=True, creationflags=subprocess.CREATE_NEW_CONSOLE)
+            sys.exit(0)  # Thoát hoàn toàn
 
         except Exception as e:
             self.show_error(f"Không thể áp dụng cập nhật:\n{str(e)}")

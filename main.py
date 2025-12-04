@@ -3,6 +3,7 @@ DOCX to XML Converter Application
 Chuyển đổi file DOCX sang XML theo cấu trúc câu hỏi
 """
 
+import shutil
 import subprocess
 import sys
 import os

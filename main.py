@@ -221,94 +221,6 @@ start "" "{current_exe}"
         return False
 
 
-
-
-# class UpdateDialog(QDialog):
-#     def __init__(self, current_version, latest_version, download_url, parent=None):
-#         super().__init__(parent)
-#         self.setWindowTitle("Cập nhật phần mềm")
-#         self.setFixedSize(450, 450)
-#         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
-
-#         self.download_url = download_url
-
-#         # ---- MAIN LAYOUT ----
-#         layout = QVBoxLayout()
-#         layout.setContentsMargins(20, 20, 20, 20)
-#         layout.setSpacing(15)
-
-#         # ---- TITLE ----
-#         title = QLabel("🔔 Có bản cập nhật mới!")
-#         title.setFont(QFont("Segoe UI", 14, QFont.Bold))
-#         title.setAlignment(Qt.AlignCenter)
-#         layout.addWidget(title)
-
-#         # ---- VERSION INFO ----
-#         info = QLabel(
-#             f"<b>Phiên bản hiện tại:</b> v{current_version}<br>"
-#             f"<b>Phiên bản mới:</b> v{latest_version}"
-#         )
-#         info.setFont(QFont("Segoe UI", 11))
-#         info.setAlignment(Qt.AlignCenter)
-#         layout.addWidget(info)
-
-#         # ---- DESCRIPTION ----
-#         desc = QLabel("Bạn có muốn cập nhật ngay không?")
-#         desc.setFont(QFont("Segoe UI", 10))
-#         desc.setAlignment(Qt.AlignCenter)
-#         layout.addWidget(desc)
-
-#         # ---- BUTTONS ----
-#         btn_layout = QHBoxLayout()
-#         btn_layout.setSpacing(20)
-
-#         self.btn_update = QPushButton("Cập nhật")
-#         self.btn_later = QPushButton("Để sau")
-
-#         # Style
-#         self.btn_update.setStyleSheet("""
-#             QPushButton {
-#                 background-color: #28a745;
-#                 color: white;
-#                 padding: 8px 18px;
-#                 border-radius: 6px;
-#                 font-size: 12pt;
-#             }
-#             QPushButton:hover {
-#                 background-color: #218838;
-#             }
-#         """)
-
-#         self.btn_later.setStyleSheet("""
-#             QPushButton {
-#                 background-color: #cccccc;
-#                 color: black;
-#                 padding: 8px 18px;
-#                 border-radius: 6px;
-#                 font-size: 12pt;
-#             }
-#             QPushButton:hover {
-#                 background-color: #b6b6b6;
-#             }
-#         """)
-
-#         btn_layout.addWidget(self.btn_update)
-#         btn_layout.addWidget(self.btn_later)
-#         layout.addLayout(btn_layout)
-
-#         self.setLayout(layout)
-
-#         # ---- SIGNALS ----
-#         self.btn_update.clicked.connect(self.accept)
-#         self.btn_later.clicked.connect(self.reject)
-
-#     def exec_(self):
-#         result = super().exec_()
-#         if result == QDialog.Accepted:
-#             return "update"
-#         return "later"
-
-
 class DownloadWorker(QThread):
     progress = pyqtSignal(int)
     finished = pyqtSignal(str)  # truyền đường dẫn file tải xong
@@ -456,10 +368,7 @@ class UpdateDialog(QDialog):
         self.status_label.setText("Đang áp dụng cập nhật...")
 
         # Kiểm tra file hợp lệ
-        if os.path.getsize(file_path) < 1_000_000:
-            self.show_error("File cập nhật không hợp lệ (quá nhỏ).")
-            return
-
+    
         # Ghi version mới
         self.update_local_version(self.latest_version)
 
@@ -470,11 +379,18 @@ class UpdateDialog(QDialog):
 
         bat_content = f'''@echo off
 chcp 65001 >nul
-timeout /t 3 /nobreak >nul
-del /f /q "{current_exe}"
+timeout /t 2 >nul
+
+:retry
+del "{current_exe}" >nul 2>&1
+if exist "{current_exe}" (
+    timeout /t 1 >nul
+    goto retry
+)
+
 move /y "{file_path}" "{current_exe}"
 start "" "{current_exe}"
-rmdir /s /q "{temp_dir}"
+exit
 '''
 
         try:
@@ -651,7 +567,7 @@ class MainWindow(QMainWindow):
         left_layout.addWidget(output_group)
         
         # Nút xử lý
-        self.process_btn = QPushButton("🚀 BẮT ĐẦU XỬ LÝ")
+        self.process_btn = QPushButton("🚀 Bắt đầu chuyển đổi")
         self.process_btn.setFont(QFont("Arial", 12, QFont.Bold))
         self.process_btn.setMinimumHeight(50)
         self.process_btn.setStyleSheet(self.get_button_style("#16a085", 50))

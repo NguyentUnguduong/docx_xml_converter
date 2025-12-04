@@ -400,37 +400,37 @@ class UpdateDialog(QDialog):
         bat_script = os.path.join(update_folder, "update.bat")
         log_file = os.path.join(update_folder, "update.log")
 
-        bat_content = f'''@echo off
-chcp 65001 >nul
+        bat_content = fr'''@echo off
+    chcp 65001 >nul
 
-set LOGFILE="%~dp0update.log"
-set UPDATE_DIR="%~dp0"
-set RUNNER="%TEMP%\update_runner.bat"
+    set LOGFILE="%~dp0update.log"
+    set UPDATE_DIR="%~dp0"
+    set RUNNER="%TEMP%\update_runner.bat"
 
-echo =============================== >> %LOGFILE%
-echo BAT STARTED %date% %time% >> %LOGFILE%
-echo Current exe: {current_exe} >> %LOGFILE%
-echo New exe: {file_path} >> %LOGFILE%
+    echo =============================== >> %LOGFILE%
+    echo BAT STARTED %date% %time% >> %LOGFILE%
+    echo Current exe: {current_exe} >> %LOGFILE%
+    echo New exe: {file_path} >> %LOGFILE%
 
-:: Tạo runner để thực hiện cleanup
-echo @echo off > "%RUNNER%"
-echo timeout /t 4 /nobreak ^>nul >> "%RUNNER%"
-echo echo Cleaning up... ^>^> %LOGFILE% >> "%RUNNER%"
-echo rmdir /s /q %UPDATE_DIR% ^>^> %LOGFILE% 2^>^&1 >> "%RUNNER%"
-echo echo Restarting app... ^>^> %LOGFILE% >> "%RUNNER%"
-echo start "" "{current_exe}" >> "%RUNNER%"
-echo exit >> "%RUNNER%"
+    :: Tạo runner để thực hiện cleanup
+    echo @echo off > "%RUNNER%"
+    echo timeout /t 4 /nobreak ^>nul >> "%RUNNER%"
+    echo echo Cleaning up... ^>^> %LOGFILE% >> "%RUNNER%"
+    echo rmdir /s /q %UPDATE_DIR% ^>^> %LOGFILE% 2^>^&1 >> "%RUNNER%"
+    echo echo Restarting app... ^>^> %LOGFILE% >> "%RUNNER%"
+    echo start "" "{current_exe}" >> "%RUNNER%"
+    echo exit >> "%RUNNER%"
 
-echo Deleting old exe... >> %LOGFILE%
-del /f /q "{current_exe}" >> %LOGFILE% 2>&1
+    echo Deleting old exe... >> %LOGFILE%
+    del /f /q "{current_exe}" >> %LOGFILE% 2>&1
 
-echo Copying new exe... >> %LOGFILE%
-move /y "{file_path}" "{current_exe}" >> %LOGFILE% 2>&1
+    echo Copying new exe... >> %LOGFILE%
+    move /y "{file_path}" "{current_exe}" >> %LOGFILE% 2>&1
 
-echo Launching runner... >> %LOGFILE%
-start "" "%RUNNER%"
+    echo Launching runner... >> %LOGFILE%
+    start "" "%RUNNER%"
 
-exit
+    exit
     '''
 
         try:

@@ -15,121 +15,308 @@ class TinHocProcessor:
     def __init__(self):
         pass
     
-    def create_safe_text_node(self, tag_name: str, content: str) -> ET.Element:
-        """
-        Create XML element with safe HTML content
-        Preserves allowed HTML tags while escaping others
-        """
-        element = ET.Element(tag_name)
+    # def create_safe_text_node(self, tag_name: str, content: str) -> ET.Element:
+    #     """
+    #     Create XML element with safe HTML content.
+    #     Preserves allowed HTML tags while escaping others.
+    #     Special case: preserves entire <table class='table-material-question'>...</table> blocks untouched.
+    #     """
+    #     element = ET.Element(tag_name)
         
-        if not content:
-            element.text = ''
-            return element
-        
-        allowed_tags = [
-            'b', 'i', 'u', 'strong', 'em', 'br', 'center', 'img',
-            'sub', 'sup', 'small', 'big', 'mark'
-        ]
-        
-        # ================================================
-        # STEP 1: Detect already escaped tags
-        # ================================================
-        escaped_tag_pattern = re.compile(r'&lt;(\/?[a-zA-Z][a-zA-Z0-9]*)\b[^&]*?&gt;')
-        escaped_tags = []
-        escaped_index = 0
-        
-        def replace_escaped(match):
-            nonlocal escaped_index
-            placeholder = f'__ESCAPED_TAG_{escaped_index}__'
-            escaped_tags.append({'placeholder': placeholder, 'original': match.group(0)})
-            escaped_index += 1
-            return placeholder
-        
-        processed_content = escaped_tag_pattern.sub(replace_escaped, content)
-        
-        # ================================================
-        # STEP 2: Detect tags in quotes/code
-        # ================================================
-        quoted_tag_pattern = re.compile(r'"([^"]*?<[^>]+>[^"]*)"')
-        quoted_tags = []
-        quoted_index = 0
-        
-        def replace_quoted(match):
-            nonlocal quoted_index
-            inner = match.group(1)
-            placeholder = f'__QUOTED_{quoted_index}__'
-            # Escape tags in quotes
-            escaped = inner.replace('<', '＜').replace('>', '＞')
-            quoted_tags.append({'placeholder': placeholder, 'original': f'"{escaped}"'})
-            quoted_index += 1
-            return placeholder
-        
-        processed_content = quoted_tag_pattern.sub(replace_quoted, processed_content)
-        
-        # ================================================
-        # STEP 3: Process actual HTML tags
-        # ================================================
-        html_tag_pattern = re.compile(r'<\/?([a-zA-Z][a-zA-Z0-9]*)\b[^<>]*\/?>')
-        tags_to_restore = []
-        tag_index = 0
-        
-        def replace_html_tag(match):
-            nonlocal tag_index
-            tag_name = match.group(1)
-            lower_tag = tag_name.lower()
-            is_allowed = lower_tag in allowed_tags
-            placeholder = f'__TAG_{tag_index}__'
-            tags_to_restore.append({
-                'placeholder': placeholder,
-                'original': match.group(0),
-                'is_allowed': is_allowed
-            })
-            tag_index += 1
-            return placeholder
-        
-        processed_content = html_tag_pattern.sub(replace_html_tag, processed_content)
-        
-        # ================================================
-        # STEP 4: Escape remaining < > characters
-        # ================================================
-        safe_content = processed_content.replace('<', '＜').replace('>', '＞')
-        
-        # ================================================
-        # STEP 5: Restore in reverse order
-        # ================================================
-        
-        # 5.1: Restore actual HTML tags
-        for tag_info in tags_to_restore:
-            placeholder = tag_info['placeholder']
-            original = tag_info['original']
-            is_allowed = tag_info['is_allowed']
-            
-            # If allowed tag → keep HTML
-            # If not → escape to fullwidth
-            restored = original if is_allowed else original.replace('<', '＜').replace('>', '＞')
-            safe_content = safe_content.replace(placeholder, restored)
-        
-        # 5.2: Restore tags in quotes (already escaped)
-        for quoted_info in quoted_tags:
-            safe_content = safe_content.replace(quoted_info['placeholder'], quoted_info['original'])
-        
-        # 5.3: Restore originally escaped tags
-        for escaped_info in escaped_tags:
-            safe_content = safe_content.replace(escaped_info['placeholder'], escaped_info['original'])
-        
-        # ================================================
-        # STEP 6: Convert fullwidth to actual HTML (ONLY for allowed tags)
-        # ================================================
-        fullwidth_tag_pattern = re.compile(
-            r'＜(\/?(?:b|i|u|strong|em|br|center|img|sub|sup|small|big|mark))\b([^＜＞]*?)＞',
-            re.IGNORECASE
-        )
-        safe_content = fullwidth_tag_pattern.sub(r'<\1\2>', safe_content)
-        
-        element.text = safe_content
-        return element
+    #     if not content:
+    #         element.text = ''
+    #         return element
 
-   
+    #     # ================================================
+    #     # STEP 0: Extract and protect full table blocks
+    #     # ================================================
+    #     table_blocks = []
+    #     table_placeholder = '__TABLE_BLOCK_{}__'
+
+    #     def protect_table_block(match):
+    #         table_html = match.group(0)
+    #         placeholder = table_placeholder.format(len(table_blocks))
+    #         table_blocks.append(table_html)
+    #         return placeholder
+
+    #     # Regex để match toàn bộ <table class='table-material-question'> ... </table>
+    #     # Dùng re.DOTALL để . match newline
+    #     table_pattern = re.compile(
+    #         r'<table\s+class\s*=\s*[\'"]table-material-question[\'"][^>]*>.*?</table>',
+    #         re.IGNORECASE | re.DOTALL
+    #     )
+    #     content = table_pattern.sub(protect_table_block, content)
+
+    #     # ================================================
+    #     # STEP 1–5: Run original escaping logic on the rest
+    #     # ================================================
+    #     allowed_tags = [
+    #         'b', 'i', 'u', 'strong', 'em', 'br', 'center', 'img',
+    #         'sub', 'sup', 'small', 'big', 'mark'
+    #     ]
+
+    #     # STEP 1: Detect already escaped tags
+    #     escaped_tag_pattern = re.compile(r'&lt;(\/?[a-zA-Z][a-zA-Z0-9]*)\b[^&]*?&gt;')
+    #     escaped_tags = []
+    #     escaped_index = 0
+
+    #     def replace_escaped(match):
+    #         nonlocal escaped_index
+    #         placeholder = f'__ESCAPED_TAG_{escaped_index}__'
+    #         escaped_tags.append({'placeholder': placeholder, 'original': match.group(0)})
+    #         escaped_index += 1
+    #         return placeholder
+
+    #     processed_content = escaped_tag_pattern.sub(replace_escaped, content)
+
+    #     # STEP 2: Detect tags in quotes/code
+    #     quoted_tag_pattern = re.compile(r'"([^"]*?<[^>]+>[^"]*)"')
+    #     quoted_tags = []
+    #     quoted_index = 0
+
+    #     def replace_quoted(match):
+
+    #         nonlocal quoted_index
+
+    #         inner = match.group(1)
+
+    #         placeholder = f'__QUOTED_{quoted_index}__'
+
+    #         escaped = inner.replace('<', '＜').replace('>', '＞')
+
+    #         quoted_tags.append({'placeholder': placeholder, 'original': f'"{escaped}"'})
+
+    #         quoted_index += 1
+
+    #         return placeholder
+
+    #     processed_content = quoted_tag_pattern.sub(replace_quoted, processed_content)
+
+    #     # STEP 3: Process actual HTML tags
+    #     html_tag_pattern = re.compile(r'<\/?([a-zA-Z][a-zA-Z0-9]*)\b[^<>]*\/?>')
+
+    #     tags_to_restore = []
+    #     tag_index = 0
+
+    #     def replace_html_tag(match):
+    #         nonlocal tag_index
+    #         tag_name = match.group(1)
+    #         lower_tag = tag_name.lower()
+    #         is_allowed = lower_tag in allowed_tags
+    #         placeholder = f'__TAG_{tag_index}__'
+    #         tags_to_restore.append({
+    #             'placeholder': placeholder,
+    #             'original': match.group(0),
+    #             'is_allowed': is_allowed
+    #         })
+    #         tag_index += 1
+    #         return placeholder
+
+    #     processed_content = html_tag_pattern.sub(replace_html_tag, processed_content)
+
+    #     # STEP 4: Escape remaining < > characters
+    #     safe_content = processed_content.replace('<', '＜').replace('>', '＞')
+
+    #     # STEP 5: Restore in reverse order
+    #     for tag_info in tags_to_restore:
+
+    #         placeholder = tag_info['placeholder']
+
+    #         original = tag_info['original']
+
+    #         is_allowed = tag_info['is_allowed']
+
+    #         restored = original if is_allowed else original.replace('<', '＜').replace('>', '＞')
+
+    #         safe_content = safe_content.replace(placeholder, restored)
+
+    #     for quoted_info in quoted_tags:
+    #         safe_content = safe_content.replace(quoted_info['placeholder'], quoted_info['original'])
+
+    #     for escaped_info in escaped_tags:
+    #         safe_content = safe_content.replace(escaped_info['placeholder'], escaped_info['original'])
+
+    #     # STEP 6: Restore table blocks (they were never escaped!)
+    #     for i, table_html in enumerate(table_blocks):
+    #         placeholder = table_placeholder.format(i)
+    #         safe_content = safe_content.replace(placeholder, table_html)
+
+    #     # STEP 7: Convert fullwidth to actual HTML (ONLY for allowed tags)
+    #     fullwidth_tag_pattern = re.compile(
+    #         r'＜(\/?(?:b|i|u|strong|em|br|center|img|sub|sup|small|big|mark))\b([^＜＞]*?)＞',
+    #         re.IGNORECASE
+    #     )
+    #     safe_content = fullwidth_tag_pattern.sub(r'<\1\2>', safe_content)
+
+    #     element.text = safe_content
+    #     return element
+
+
+    def create_safe_text_node(self, tag_name: str, content: str) -> ET.Element:
+            """
+            Create XML element with safe HTML content.
+            Preserves allowed HTML tags while escaping others.
+            Special case: preserves entire <table class='table-material-question'>...</table> blocks untouched.
+            """
+            element = ET.Element(tag_name)
+            
+            if not content:
+                element.text = ''
+                return element
+
+            # ================================================
+            # STEP 0: Extract and protect full table blocks
+            # ================================================
+            table_blocks = []
+            table_placeholder = '__TABLE_BLOCK_{}__'
+
+            def protect_table_block(match):
+                table_html = match.group(0)
+                placeholder = table_placeholder.format(len(table_blocks))
+                table_blocks.append(table_html)
+                return placeholder
+
+            # Regex để match toàn bộ <table class='table-material-question'> ... </table>
+            # Dùng re.DOTALL để . match newline
+            table_pattern = re.compile(
+                r'<table\s+class\s*=\s*[\'"]table-material-question[\'"][^>]*>.*?</table>',
+                re.IGNORECASE | re.DOTALL
+            )
+            content = table_pattern.sub(protect_table_block, content)
+
+            image_blocks = []
+            image_placeholder = '__IMAGE_BLOCK_{}__'
+
+            def protect_image_block(match):
+
+                img_html = match.group(0)
+
+                placeholder = image_placeholder.format(len(image_blocks))
+
+                image_blocks.append(img_html)
+                return placeholder
+
+            # Regex để match <img ... src="data:image/...;base64,..."> (có thể có thuộc tính khác, tự đóng hoặc không)
+            # image_pattern = re.compile(
+            #     r'<img\s+[^>]*?src\s*=\s*[\'"]data:image/[a-z0-9+.-]+;base64,[a-zA-Z0-9+/=]+[\'"][^>]*>',
+            #     re.IGNORECASE
+            # )
+            image_pattern = re.compile(
+                r'<img\s+[^>]*?src\s*=\s*[\'"]'
+                r'data:image/[a-z0-9.+-]+;base64,'
+                r'[a-zA-Z0-9+/=]+'
+                r'[\'"][^>]*?>',
+                re.IGNORECASE | re.DOTALL
+            )
+            content = image_pattern.sub(protect_image_block, content)
+
+            # ================================================
+            # STEP 1–5: Run original escaping logic on the rest
+            # ================================================
+            allowed_tags = [
+                'b', 'i', 'u', 'strong', 'em', 'br', 'center',
+                'sub', 'sup', 'small', 'big', 'mark'
+            ]
+
+            # STEP 1: Detect already escaped tags
+            escaped_tag_pattern = re.compile(r'&lt;(\/?[a-zA-Z][a-zA-Z0-9]*)\b[^&]*?&gt;')
+            escaped_tags = []
+            escaped_index = 0
+
+            def replace_escaped(match):
+                nonlocal escaped_index
+                placeholder = f'__ESCAPED_TAG_{escaped_index}__'
+                escaped_tags.append({'placeholder': placeholder, 'original': match.group(0)})
+                escaped_index += 1
+                return placeholder
+
+            processed_content = escaped_tag_pattern.sub(replace_escaped, content)
+
+            # STEP 2: Detect tags in quotes/code
+            quoted_tag_pattern = re.compile(r'"([^"]*?<[^>]+>[^"]*)"')
+            quoted_tags = []
+            quoted_index = 0
+
+            def replace_quoted(match):
+
+                nonlocal quoted_index
+
+                inner = match.group(1)
+
+                placeholder = f'__QUOTED_{quoted_index}__'
+
+                escaped = inner.replace('<', '＜').replace('>', '＞')
+
+                quoted_tags.append({'placeholder': placeholder, 'original': f'"{escaped}"'})
+
+                quoted_index += 1
+
+                return placeholder
+
+            processed_content = quoted_tag_pattern.sub(replace_quoted, processed_content)
+
+            # STEP 3: Process actual HTML tags
+            html_tag_pattern = re.compile(r'<\/?([a-zA-Z][a-zA-Z0-9]*)\b[^<>]*\/?>')
+
+            tags_to_restore = []
+            tag_index = 0
+
+            def replace_html_tag(match):
+                nonlocal tag_index
+                tag_name = match.group(1)
+                lower_tag = tag_name.lower()
+                is_allowed = lower_tag in allowed_tags
+                placeholder = f'__TAG_{tag_index}__'
+                tags_to_restore.append({
+                    'placeholder': placeholder,
+                    'original': match.group(0),
+                    'is_allowed': is_allowed
+                })
+                tag_index += 1
+                return placeholder
+
+            processed_content = html_tag_pattern.sub(replace_html_tag, processed_content)
+
+            # STEP 4: Escape remaining < > characters → YOUR REQUESTED CHANGE HERE
+            safe_content = processed_content.replace('<', ' &lt; ').replace('>', ' &gt; ')
+
+            # STEP 5: Restore in reverse order
+            for tag_info in tags_to_restore:
+
+                placeholder = tag_info['placeholder']
+
+                original = tag_info['original']
+
+                is_allowed = tag_info['is_allowed']
+
+                restored = original if is_allowed else original.replace('<', ' &lt; ').replace('>', ' &gt; ')
+
+                safe_content = safe_content.replace(placeholder, restored)
+
+            for quoted_info in quoted_tags:
+                safe_content = safe_content.replace(quoted_info['placeholder'], quoted_info['original'])
+
+            for escaped_info in escaped_tags:
+                safe_content = safe_content.replace(escaped_info['placeholder'], escaped_info['original'])
+
+            # STEP 6: Restore table blocks (they were never escaped!)
+            for i, table_html in enumerate(table_blocks):
+                placeholder = table_placeholder.format(i)
+                safe_content = safe_content.replace(placeholder, table_html)
+
+            for i, img_html in enumerate(image_blocks):
+                placeholder = image_placeholder.format(i)
+                safe_content = safe_content.replace(placeholder, img_html)    
+
+            # STEP 7: Convert fullwidth to actual HTML (ONLY for allowed tags)
+            fullwidth_tag_pattern = re.compile(
+                r'＜(\/?(?:b|i|u|strong|em|br|center|sub|sup|small|big|mark))\b([^＜＞]*?)＞',
+                re.IGNORECASE
+            )
+            safe_content = fullwidth_tag_pattern.sub(r'<\1\2>', safe_content)
+
+            element.text = safe_content
+            return element
 
     # ============================================
     # TN (Multiple Choice) Processing Functions
@@ -168,7 +355,7 @@ class TinHocProcessor:
                     text = get_text(child).strip()
                     
                     # Detect answer (A. B. C. D. or a. b. c. d.)
-                    if re.match(r'^[A-Da-d]\.', text):
+                    if re.match(r'^[A-Za-z]\.', text):
                         if len(content_q) == 1:
                             content_q.append([[para]])
                         else:
@@ -198,7 +385,16 @@ class TinHocProcessor:
         each_question_xml.append(content_question)
         
         # Process choices A B C D
-        index_answer = self.list_answers_tn_tinhoc(content_q[1], cau_sau_xu_ly[1][0], each_question_xml, doc)
+        # index_answer = self.list_answers_tn_tinhoc(content_q[1], cau_sau_xu_ly[1][0], each_question_xml, doc)
+
+        if not cau_sau_xu_ly[1]:
+            # Không có lời giải → xử lý mặc định hoặc báo lỗi
+            # Ví dụ: coi như không có đáp án đúng
+            index_answer = []
+            # Tạo listanswers rỗng nếu cần
+            listanswers = ET.SubElement(each_question_xml, 'listanswers')
+        else:
+            index_answer = self.list_answers_tn_tinhoc(content_q[1], cau_sau_xu_ly[1][0], each_question_xml, doc)
         
         # Process explanation
         array_hdg = []
@@ -266,13 +462,20 @@ class TinHocProcessor:
         result = ''
         
         for child in children:
+
             if hasattr(child, 'getType') and get_element_type(child) == 'TEXT':
+
                 text = self.process_style_tinhoc(child)
+
                 result += text
             elif get_element_type(child) == 'INLINE_IMAGE':
+
                 blob = get_blob(child)
+
                 width = get_width(child)
+
                 height = get_height(child)
+
                 img_base64 = base64.b64encode(get_bytes(blob)).decode('utf-8')
                 
                 result += f'<img style="width:{width}px;height:{height}px;" src="data:image/png;base64,{img_base64}" />'
@@ -282,13 +485,16 @@ class TinHocProcessor:
     def process_style_tinhoc(self, text_element: Any) -> str:
         """Process text with formatting (bold, italic, underline)"""
         full_text = get_text(text_element) or ''
+
         indices = get_text_attribute_indices(text_element)
+
         html_content = ''
         
         prev_format = {'bold': False, 'italic': False, 'underline': False}
         
         for j, start_pos in enumerate(indices):
             end_pos = indices[j + 1] if j + 1 < len(indices) else len(full_text)
+            
             segment_text = full_text[start_pos:end_pos]
             
             attrs = get_attributes(text_element, start_pos)
@@ -333,7 +539,7 @@ class TinHocProcessor:
         """Process explanation for TN - Tin học.
         Nếu có hướng dẫn (hdg) thực sự thì thêm vào, 
         còn nếu trống thì KHÔNG thêm 'Đáp án đúng là ...'."""
-        import re
+        
 
         answer = ['A', 'B', 'C', 'D']
 

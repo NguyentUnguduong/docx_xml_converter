@@ -254,20 +254,29 @@ class UpdateDialog(QDialog):
     def __init__(self, current_version, latest_version, download_url, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Cập nhật phần mềm")
+
         self.setFixedSize(450, 250)  # giảm chiều cao ban đầu
+
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
 
+
         self.download_url = download_url
+
         self.current_version = current_version
+
         self.latest_version = latest_version
+
         self.temp_exe_path = None
+
         self.worker = None
 
         self.init_ui()
 
     def init_ui(self):
         layout = QVBoxLayout()
+
         layout.setContentsMargins(20, 20, 20, 20)
+
         layout.setSpacing(15)
 
         # Title
@@ -282,12 +291,16 @@ class UpdateDialog(QDialog):
             f"<b>Phiên bản mới:</b> v{self.latest_version}"
         )
         info.setFont(QFont("Segoe UI", 11))
+
         info.setAlignment(Qt.AlignCenter)
+
         layout.addWidget(info)
 
         # Status label (ẩn ban đầu)
         self.status_label = QLabel("")
+
         self.status_label.setFont(QFont("Segoe UI", 10))
+
         self.status_label.setAlignment(Qt.AlignCenter)
         self.status_label.hide()
         layout.addWidget(self.status_label)
@@ -333,21 +346,29 @@ class UpdateDialog(QDialog):
         """)
 
         btn_layout.addWidget(self.btn_update)
+
         btn_layout.addWidget(self.btn_later)
+
         layout.addLayout(btn_layout)
 
         self.setLayout(layout)
 
         self.btn_update.clicked.connect(self.start_update)
+
         self.btn_later.clicked.connect(self.reject)
 
     def start_update(self):
         # Ẩn nút, hiện progress
         self.btn_update.hide()
+
         self.btn_later.hide()
+
         self.status_label.setText("Đang tải bản cập nhật...")
+
         self.status_label.show()
+
         self.progress_bar.show()
+
         self.setFixedSize(450, 280)  # mở rộng một chút để đủ chỗ
 
         # Tạo file tạm
@@ -374,7 +395,9 @@ class UpdateDialog(QDialog):
 
         # Tạo batch script
         current_exe = sys.executable
+
         temp_dir = os.path.dirname(file_path)
+
         bat_script = os.path.join(temp_dir, "update.bat")
 
         bat_content = f'''@echo off
@@ -398,7 +421,9 @@ exit
                 f.write(bat_content)
 
             subprocess.Popen([bat_script], shell=True)
+
             self.accept()
+            
             sys.exit(0)
         except Exception as e:
             self.show_error(f"Không thể áp dụng cập nhật:\n{str(e)}")

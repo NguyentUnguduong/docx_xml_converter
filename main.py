@@ -16,22 +16,26 @@ from PyQt5.QtCore import Qt, QThread, pyqtSignal
 from PyQt5.QtGui import QFont, QIcon
 import traceback
 import requests
-from packaging import version
+from packaging  import version
 import json
 
 from docx_processor import DocxProcessor # Import lớp đã cập nhật
 
-
 class ProcessingThread(QThread):
     """Thread xử lý file để không block UI"""
     progress = pyqtSignal(str)  # Thông báo tiến trình
+
     finished = pyqtSignal(bool, str, dict)  # Kết quả: (overall_success, overall_message, file_results)
+
     file_progress = pyqtSignal(int, int)  # (current_file, total_files)
     
     def __init__(self, input_files, output_dir):
         super().__init__()
+
         self.input_files = input_files
+
         self.output_dir = output_dir
+
         self.processor = DocxProcessor()
         
     def run(self):
@@ -117,10 +121,12 @@ def get_version_file_path():
 def get_current_version():
     """Đọc version hiện tại từ version.json"""
     version_file = get_version_file_path()
+    print(f"[DEBUG] Đang đọc version từ: {version_file}")
     try:
         if os.path.exists(version_file):
             with open(version_file, "r", encoding="utf-8") as f:
                 data = json.load(f)
+                print(f"[DEBUG] Nội dung version.json: {data}")
             return data.get("version", "0.0.0")
         else:
             return "0.0.0"
@@ -186,7 +192,7 @@ def download_and_update(download_url, latest_version):
         exe_name = os.path.basename(current_exe).lower()
 
         # Kiểm tra exe nhạy cảm
-        forbidden_exes = ["python.exe", "pythonw.exe"]
+        forbidden_exes = ["python.exe", "python313.exe"]
         if exe_name in forbidden_exes:
             QMessageBox.critical(None, "Cảnh báo",
                                  f"Không thể cập nhật từ {exe_name}")
@@ -214,49 +220,180 @@ start "" "{current_exe}"
         QMessageBox.critical(None, "Lỗi cập nhật", f"Không thể cập nhật:\n{str(e)}")
         return False
 
+
+
+
+# class UpdateDialog(QDialog):
+#     def __init__(self, current_version, latest_version, download_url, parent=None):
+#         super().__init__(parent)
+#         self.setWindowTitle("Cập nhật phần mềm")
+#         self.setFixedSize(450, 450)
+#         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
+
+#         self.download_url = download_url
+
+#         # ---- MAIN LAYOUT ----
+#         layout = QVBoxLayout()
+#         layout.setContentsMargins(20, 20, 20, 20)
+#         layout.setSpacing(15)
+
+#         # ---- TITLE ----
+#         title = QLabel("🔔 Có bản cập nhật mới!")
+#         title.setFont(QFont("Segoe UI", 14, QFont.Bold))
+#         title.setAlignment(Qt.AlignCenter)
+#         layout.addWidget(title)
+
+#         # ---- VERSION INFO ----
+#         info = QLabel(
+#             f"<b>Phiên bản hiện tại:</b> v{current_version}<br>"
+#             f"<b>Phiên bản mới:</b> v{latest_version}"
+#         )
+#         info.setFont(QFont("Segoe UI", 11))
+#         info.setAlignment(Qt.AlignCenter)
+#         layout.addWidget(info)
+
+#         # ---- DESCRIPTION ----
+#         desc = QLabel("Bạn có muốn cập nhật ngay không?")
+#         desc.setFont(QFont("Segoe UI", 10))
+#         desc.setAlignment(Qt.AlignCenter)
+#         layout.addWidget(desc)
+
+#         # ---- BUTTONS ----
+#         btn_layout = QHBoxLayout()
+#         btn_layout.setSpacing(20)
+
+#         self.btn_update = QPushButton("Cập nhật")
+#         self.btn_later = QPushButton("Để sau")
+
+#         # Style
+#         self.btn_update.setStyleSheet("""
+#             QPushButton {
+#                 background-color: #28a745;
+#                 color: white;
+#                 padding: 8px 18px;
+#                 border-radius: 6px;
+#                 font-size: 12pt;
+#             }
+#             QPushButton:hover {
+#                 background-color: #218838;
+#             }
+#         """)
+
+#         self.btn_later.setStyleSheet("""
+#             QPushButton {
+#                 background-color: #cccccc;
+#                 color: black;
+#                 padding: 8px 18px;
+#                 border-radius: 6px;
+#                 font-size: 12pt;
+#             }
+#             QPushButton:hover {
+#                 background-color: #b6b6b6;
+#             }
+#         """)
+
+#         btn_layout.addWidget(self.btn_update)
+#         btn_layout.addWidget(self.btn_later)
+#         layout.addLayout(btn_layout)
+
+#         self.setLayout(layout)
+
+#         # ---- SIGNALS ----
+#         self.btn_update.clicked.connect(self.accept)
+#         self.btn_later.clicked.connect(self.reject)
+
+#     def exec_(self):
+#         result = super().exec_()
+#         if result == QDialog.Accepted:
+#             return "update"
+#         return "later"
+
+
+class DownloadWorker(QThread):
+    progress = pyqtSignal(int)
+    finished = pyqtSignal(str)  # truyền đường dẫn file tải xong
+    error = pyqtSignal(str)
+
+    def __init__(self, url, save_path):
+        super().__init__()
+        self.url = url
+        self.save_path = save_path
+
+    def run(self):
+        try:
+            with requests.get(self.url, stream=True, timeout=30) as r:
+                r.raise_for_status()
+                total_size = int(r.headers.get('content-length', 0))
+                downloaded = 0
+                with open(self.save_path, 'wb') as f:
+                    for chunk in r.iter_content(chunk_size=8192):
+                        if chunk:
+                            f.write(chunk)
+                            downloaded += len(chunk)
+                            if total_size > 0:
+                                perc = int(100 * downloaded / total_size)
+                                self.progress.emit(perc)
+                self.finished.emit(self.save_path)
+        except Exception as e:
+            self.error.emit(str(e))
+
+
 class UpdateDialog(QDialog):
     def __init__(self, current_version, latest_version, download_url, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Cập nhật phần mềm")
-        self.setFixedSize(450, 450)
+        self.setFixedSize(450, 250)  # giảm chiều cao ban đầu
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowContextHelpButtonHint)
 
         self.download_url = download_url
+        self.current_version = current_version
+        self.latest_version = latest_version
+        self.temp_exe_path = None
+        self.worker = None
 
-        # ---- MAIN LAYOUT ----
+        self.init_ui()
+
+    def init_ui(self):
         layout = QVBoxLayout()
         layout.setContentsMargins(20, 20, 20, 20)
         layout.setSpacing(15)
 
-        # ---- TITLE ----
+        # Title
         title = QLabel("🔔 Có bản cập nhật mới!")
         title.setFont(QFont("Segoe UI", 14, QFont.Bold))
         title.setAlignment(Qt.AlignCenter)
         layout.addWidget(title)
 
-        # ---- VERSION INFO ----
+        # Version info
         info = QLabel(
-            f"<b>Phiên bản hiện tại:</b> v{current_version}<br>"
-            f"<b>Phiên bản mới:</b> v{latest_version}"
+            f"<b>Phiên bản hiện tại:</b> v{self.current_version}<br>"
+            f"<b>Phiên bản mới:</b> v{self.latest_version}"
         )
         info.setFont(QFont("Segoe UI", 11))
         info.setAlignment(Qt.AlignCenter)
         layout.addWidget(info)
 
-        # ---- DESCRIPTION ----
-        desc = QLabel("Bạn có muốn cập nhật ngay không?")
-        desc.setFont(QFont("Segoe UI", 10))
-        desc.setAlignment(Qt.AlignCenter)
-        layout.addWidget(desc)
+        # Status label (ẩn ban đầu)
+        self.status_label = QLabel("")
+        self.status_label.setFont(QFont("Segoe UI", 10))
+        self.status_label.setAlignment(Qt.AlignCenter)
+        self.status_label.hide()
+        layout.addWidget(self.status_label)
 
-        # ---- BUTTONS ----
+        # Progress bar (ẩn ban đầu)
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(0)
+        self.progress_bar.hide()
+        layout.addWidget(self.progress_bar)
+
+        # Buttons
         btn_layout = QHBoxLayout()
         btn_layout.setSpacing(20)
 
         self.btn_update = QPushButton("Cập nhật")
         self.btn_later = QPushButton("Để sau")
 
-        # Style
         self.btn_update.setStyleSheet("""
             QPushButton {
                 background-color: #28a745;
@@ -289,16 +426,94 @@ class UpdateDialog(QDialog):
 
         self.setLayout(layout)
 
-        # ---- SIGNALS ----
-        self.btn_update.clicked.connect(self.accept)
+        self.btn_update.clicked.connect(self.start_update)
         self.btn_later.clicked.connect(self.reject)
 
-    def exec_(self):
-        result = super().exec_()
-        if result == QDialog.Accepted:
-            return "update"
-        return "later"
+    def start_update(self):
+        # Ẩn nút, hiện progress
+        self.btn_update.hide()
+        self.btn_later.hide()
+        self.status_label.setText("Đang tải bản cập nhật...")
+        self.status_label.show()
+        self.progress_bar.show()
+        self.setFixedSize(450, 280)  # mở rộng một chút để đủ chỗ
 
+        # Tạo file tạm
+        temp_dir = tempfile.mkdtemp()
+        self.temp_exe_path = os.path.join(temp_dir, "new_app.exe")
+
+        # Bắt đầu luồng tải
+        self.worker = DownloadWorker(self.download_url, self.temp_exe_path)
+        self.worker.progress.connect(self.update_progress)
+        self.worker.finished.connect(self.on_download_finished)
+        self.worker.error.connect(self.on_download_error)
+        self.worker.start()
+
+    def update_progress(self, value):
+        self.progress_bar.setValue(value)
+
+    def on_download_finished(self, file_path):
+        self.status_label.setText("Đang áp dụng cập nhật...")
+
+        # Kiểm tra file hợp lệ
+        if os.path.getsize(file_path) < 1_000_000:
+            self.show_error("File cập nhật không hợp lệ (quá nhỏ).")
+            return
+
+        # Ghi version mới
+        self.update_local_version(self.latest_version)
+
+        # Tạo batch script
+        current_exe = sys.executable
+        temp_dir = os.path.dirname(file_path)
+        bat_script = os.path.join(temp_dir, "update.bat")
+
+        bat_content = f'''@echo off
+chcp 65001 >nul
+timeout /t 3 /nobreak >nul
+del /f /q "{current_exe}"
+move /y "{file_path}" "{current_exe}"
+start "" "{current_exe}"
+rmdir /s /q "{temp_dir}"
+'''
+
+        try:
+            with open(bat_script, "w", encoding="utf-8-sig") as f:
+                f.write(bat_content)
+
+            subprocess.Popen([bat_script], shell=True)
+            self.accept()
+            sys.exit(0)
+        except Exception as e:
+            self.show_error(f"Không thể áp dụng cập nhật:\n{str(e)}")
+
+    def on_download_error(self, error_msg):
+        self.show_error(f"Lỗi khi tải cập nhật:\n{error_msg}")
+
+    def show_error(self, msg):
+        self.status_label.setText("❌ Cập nhật thất bại")
+        QMessageBox.critical(self, "Lỗi cập nhật", msg)
+        self.reject()
+
+    def update_local_version(self, new_version):
+        """Ghi version.json (giống hàm toàn cục, nhưng có thể reuse)"""
+        if getattr(sys, "frozen", False):
+            base_path = os.path.dirname(sys.executable)
+        else:
+            base_path = os.path.dirname(os.path.abspath(__file__))
+        version_file = os.path.join(base_path, "version.json")
+        try:
+            with open(version_file, "w", encoding="utf-8") as f:
+                json.dump({"version": new_version}, f, ensure_ascii=False, indent=4)
+        except Exception as e:
+            print(f"Lỗi ghi version.json: {e}")
+
+    def closeEvent(self, event):
+        # Đảm bảo luồng được dừng (nếu cần)
+        if self.worker and self.worker.isRunning():
+            self.worker.quit()
+            self.worker.wait()
+        super().closeEvent(event)
 
 class MainWindow(QMainWindow):
     def __init__(self):
@@ -308,20 +523,34 @@ class MainWindow(QMainWindow):
         self.processing_thread = None
         self.detail_results_text = ""
         self.init_ui()
-        # self.check_update_on_start()
+        self.check_update_on_start()
 
+    # def check_update_on_start(self):
+    #     """Kiểm tra cập nhật ngay khi app mở"""
+    #     try:
+    #         current_version = get_current_version()
+    #         has_update, url, latest_ver = check_for_update()
+    #         if has_update and url:
+    #             dialog = UpdateDialog(current_version, latest_ver, url, self)
+    #             choice = dialog.exec_()
+    #             if choice == "update":
+    #                 download_and_update(url, latest_ver)
+    #     except Exception as e:
+    #         print(f"Lỗi khi kiểm tra cập nhật: {e}")
     def check_update_on_start(self):
         """Kiểm tra cập nhật ngay khi app mở"""
         try:
             current_version = get_current_version()
             has_update, url, latest_ver = check_for_update()
             if has_update and url:
+                # Hiển thị dialog có tiến trình tải
                 dialog = UpdateDialog(current_version, latest_ver, url, self)
-                choice = dialog.exec_()
-                if choice == "update":
-                    download_and_update(url, latest_ver)
+                dialog.exec_()  # dialog sẽ tự xử lý tải + cập nhật + thoát nếu cần
+                # ⚠️ Nếu cập nhật thành công, app đã exit rồi → dòng dưới KHÔNG CHẠY
+                # Nếu người dùng bấm "Để sau", exec_() trả về và app tiếp tục bình thường
         except Exception as e:
-            print(f"Lỗi khi kiểm tra cập nhật: {e}")
+            print(f"[Lỗi khi kiểm tra cập nhật]: {e}")
+            # Có thể hiện QMessageBox nếu muốn, nhưng không bắt buộc
         
     def init_ui(self):
         """Khởi tạo giao diện"""
@@ -337,7 +566,7 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(20, 20, 20, 20)
         
         # Header
-        header_label = QLabel("📄 DOCX to XML Converter")
+        header_label = QLabel("📄 Công cụ chuyển đổi từ file DOCX sang file XML")
         header_label.setFont(QFont("Arial", 18, QFont.Bold))
         header_label.setAlignment(Qt.AlignCenter)
         header_label.setStyleSheet("""
@@ -548,6 +777,8 @@ class MainWindow(QMainWindow):
             self.file_list.takeItem(current_row)
             self.log(f"🗑️ Đã xóa: {Path(removed).name}")
             self.statusBar().showMessage(f"Còn {len(self.input_files)} file")
+
+   
     
     def clear_files(self):
         """Xóa tất cả file"""
@@ -665,12 +896,7 @@ class MainWindow(QMainWindow):
         clicked_button = msg_box.clickedButton()
         if clicked_button == view_details_btn:
             # Hiển thị một hộp thoại thông tin khác với nội dung chi tiết
-            detail_msg = QMessageBox(self)
-            detail_msg.setWindowTitle("Chi Tiết Kết Quả")
-            detail_msg.setTextFormat(Qt.PlainText) # Đặt định dạng là Plain Text để không bị hiểu là HTML
-            detail_msg.setText(self.detailed_results_text)
-            detail_msg.setIcon(QMessageBox.Information)
-            detail_msg.exec_()
+            self.show_detail_results()
         elif clicked_button == open_folder_btn:
             # Mở thư mục kết quả
             try:
@@ -678,6 +904,25 @@ class MainWindow(QMainWindow):
             except Exception as e:
                 QMessageBox.critical(self, "Lỗi", f"Không thể mở thư mục: {str(e)}")
     
+    def show_detail_results(self):
+        """Hiển thị popup chứa chi tiết kết quả"""
+        dlg = QDialog(self)
+        dlg.setWindowTitle("Chi tiết kết quả xử lý")
+        dlg.setMinimumSize(600, 500)
+
+        layout = QVBoxLayout(dlg)
+
+        text = QTextEdit()
+        text.setReadOnly(True)
+        text.setText(self.detailed_results_text)
+        layout.addWidget(text)
+
+        close_btn = QPushButton("Đóng")
+        close_btn.clicked.connect(dlg.close)
+        layout.addWidget(close_btn)
+
+        dlg.exec_()
+
     def set_buttons_enabled(self, enabled):
         """Enable/disable buttons"""
         self.add_files_btn.setEnabled(enabled)

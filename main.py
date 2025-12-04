@@ -474,10 +474,10 @@ class UpdateDialog(QDialog):
             # => Chúng ta sẽ đổi tên file hiện tại (nếu cần backup) hoặc ghi đè trực tiếp.
 
             # Đổi tên file cũ để phòng trường hợp lỗi (tuỳ chọn)
-            backup_exe = current_exe + ".bak"
-            if os.path.exists(backup_exe):
-                os.remove(backup_exe)
-            os.rename(current_exe, backup_exe)
+            # backup_exe = current_exe + ".bak"
+            # if os.path.exists(backup_exe):
+            #     os.remove(backup_exe)
+            # os.rename(current_exe, backup_exe)
 
             # --- Bước 2: Di chuyển file mới vào vị trí chính ---
             shutil.move(file_path, current_exe)
@@ -615,7 +615,7 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(20, 20, 20, 20)
         
         # Header
-        header_label = QLabel("📄 Công cụ chuyển đổi từ file DOCX sang file XML")
+        header_label = QLabel("📄 Công cụ chuyển đổi từ file Docx sang file Xml")
         header_label.setFont(QFont("Arial", 18, QFont.Bold))
         header_label.setAlignment(Qt.AlignCenter)
         header_label.setStyleSheet("""

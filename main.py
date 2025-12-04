@@ -389,9 +389,6 @@ class UpdateDialog(QDialog):
     def on_download_finished(self, file_path):
         self.status_label.setText("Đang áp dụng cập nhật...")
 
-        # Kiểm tra file hợp lệ
-     
-
         # Ghi version mới
         self.update_local_version(self.latest_version)
 
@@ -400,46 +397,69 @@ class UpdateDialog(QDialog):
         bat_script = os.path.join(update_folder, "update.bat")
         log_file = os.path.join(update_folder, "update.log")
 
+        # Ghi nội dung batch an toàn hơn, tránh lỗi encoding và lock
         bat_content = fr'''@echo off
     chcp 65001 >nul
+    set "LOGFILE={log_file}"
+    set "UPDATE_FOLDER={update_folder}"
+    set "CURRENT_EXE={current_exe}"
+    set "NEW_EXE={file_path}"
 
-    set LOGFILE="%~dp0update.log"
-    set UPDATE_DIR="%~dp0"
-    set RUNNER="%TEMP%\update_runner.bat"
+    echo =============================== >> "%LOGFILE%"
+    echo Update process started at %date% %time% >> "%LOGFILE%"
+    echo Current EXE: %CURRENT_EXE% >> "%LOGFILE%"
+    echo New EXE: %NEW_EXE% >> "%LOGFILE%"
 
-    echo =============================== >> %LOGFILE%
-    echo BAT STARTED %date% %time% >> %LOGFILE%
-    echo Current exe: {current_exe} >> %LOGFILE%
-    echo New exe: {file_path} >> %LOGFILE%
+    :: Đợi 3 giây để ứng dụng chính hoàn toàn thoát
+    timeout /t 3 /nobreak >nul
 
-    :: Tạo runner để thực hiện cleanup
-    echo @echo off > "%RUNNER%"
-    echo timeout /t 4 /nobreak ^>nul >> "%RUNNER%"
-    echo echo Cleaning up... ^>^> %LOGFILE% >> "%RUNNER%"
-    echo rmdir /s /q %UPDATE_DIR% ^>^> %LOGFILE% 2^>^&1 >> "%RUNNER%"
-    echo echo Restarting app... ^>^> %LOGFILE% >> "%RUNNER%"
-    echo start "" "{current_exe}" >> "%RUNNER%"
-    echo exit >> "%RUNNER%"
+    :: Ghi log trước khi xóa
+    echo [INFO] Attempting to delete current EXE... >> "%LOGFILE%"
 
-    echo Deleting old exe... >> %LOGFILE%
-    del /f /q "{current_exe}" >> %LOGFILE% 2>&1
+    :: Thử xóa EXE cũ — có thể thất bại nếu vẫn bị lock, nhưng thường sau timeout sẽ ok
+    del /f /q "%CURRENT_EXE%" >> "%LOGFILE%" 2>&1
 
-    echo Copying new exe... >> %LOGFILE%
-    move /y "{file_path}" "{current_exe}" >> %LOGFILE% 2>&1
+    :: Di chuyển file mới vào vị trí
+    echo [INFO] Moving new EXE into place... >> "%LOGFILE%"
+    move /y "%NEW_EXE%" "%CURRENT_EXE%" >> "%LOGFILE%" 2>&1
 
-    echo Launching runner... >> %LOGFILE%
-    start "" "%RUNNER%"
+    :: Kiểm tra xem file mới có tồn tại không
+    if not exist "%CURRENT_EXE%" (
+        echo [ERROR] Failed to replace EXE! >> "%LOGFILE%"
+        pause
+        exit /b 1
+    )
+
+    echo [SUCCESS] EXE replaced successfully. >> "%LOGFILE%"
+
+    :: Khởi động lại app
+    echo [INFO] Restarting application... >> "%LOGFILE%"
+    start "" "%CURRENT_EXE%" >> "%LOGFILE%" 2>&1
+
+    :: Dọn dẹp sau 5 giây bằng một tiến trình riêng
+    echo [INFO] Scheduling cleanup... >> "%LOGFILE%"
+    (
+        timeout /t 5 /nobreak >nul
+        rmdir /s /q "%UPDATE_FOLDER%" >nul 2>&1
+    ) >nul 2>&1 &
 
     exit
     '''
 
         try:
+            # Ghi file với encoding UTF-8 không BOM
             with open(bat_script, "w", encoding="utf-8-sig") as f:
                 f.write(bat_content)
 
-            subprocess.Popen([bat_script], shell=True)
+            # Đảm bảo app chính đã hoàn toàn thoát (nên gọi sys.exit sau khi mở batch)
+            # Chạy batch script **độc lập**, không giữ handle
+            subprocess.Popen([bat_script], shell=True, close_fds=True)
+            
+            # THOÁT ỨNG DỤNG NGAY SAU KHI GỌI BATCH
             self.accept()
+            QApplication.quit()  # Thay vì sys.exit(0) — an toàn hơn trong Qt
             sys.exit(0)
+
         except Exception as e:
             self.show_error(f"Không thể áp dụng cập nhật:\n{str(e)}")
 

@@ -474,10 +474,10 @@ class UpdateDialog(QDialog):
             # => Chúng ta sẽ đổi tên file hiện tại (nếu cần backup) hoặc ghi đè trực tiếp.
 
             # Đổi tên file cũ để phòng trường hợp lỗi (tuỳ chọn)
-            # backup_exe = current_exe + ".bak"
-            # if os.path.exists(backup_exe):
-            #     os.remove(backup_exe)
-            # os.rename(current_exe, backup_exe)
+            backup_exe = current_exe + ".bak"
+            if os.path.exists(backup_exe):
+                os.remove(backup_exe)
+            os.rename(current_exe, backup_exe)
 
             # --- Bước 2: Di chuyển file mới vào vị trí chính ---
             shutil.move(file_path, current_exe)
@@ -508,7 +508,7 @@ class UpdateDialog(QDialog):
 
         layout = QVBoxLayout()
 
-        label = QLabel(f"Ứng dụng đã được cập nhật thành công!\nĐường dẫn:\n<code>{exe_path}</code>")
+        label = QLabel(f"Ứng dụng đã được cập nhật thành công!\n.File exe cũ sẽ được lưu trong cùng đường dẫn. Nếu không cần thiết bạn có thể tự xóa.\nĐường dẫn:\n<code>{exe_path}</code>")
         label.setTextFormat(Qt.TextFormat.RichText)
         label.setWordWrap(True)
         label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)

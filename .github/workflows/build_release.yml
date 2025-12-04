@@ -30,7 +30,7 @@ jobs:
 
       - name: Build EXE with PyInstaller
         run: |
-            pyinstaller --clean --noconfirm --onefile --copy-metadata "packaging" --copy-metadata "importlib_metadata" --windowed --add-data "document_element.py;." --add-data "docx_processor.py;." --add-data "tinhoc_processor.py;." --name Convert_XML main.py
+            pyinstaller --clean --noconfirm --onefile --copy-metadata "packaging" --windowed --add-data "document_element.py;." --add-data "docx_processor.py;." --add-data "tinhoc_processor.py;." --name Convert_XML main.py
 
       - name: Zip build
         run: |

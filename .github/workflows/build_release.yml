@@ -34,7 +34,7 @@ jobs:
 
       - name: Zip build
         run: |
-           powershell Compress-Archive -Path "dist\Convert_XML.exe" -DestinationPath "dist\app.zip" -Force
+            powershell Compress-Archive -Path "dist\Convert_XML\*" -DestinationPath "dist\app.zip" -Force
 
       - name: Upload EXE to Release
         uses: softprops/action-gh-release@v2

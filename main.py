@@ -401,29 +401,36 @@ class UpdateDialog(QDialog):
         log_file = os.path.join(update_folder, "update.log")
 
         bat_content = f'''@echo off
-    chcp 65001 >nul
+chcp 65001 >nul
 
-    echo =============================== >> "{log_file}"
-    echo BAT STARTED %date% %time% >> "{log_file}"
-    echo Current exe: {current_exe} >> "{log_file}"
-    echo New exe: {file_path} >> "{log_file}"
+set LOGFILE="%~dp0update.log"
+set UPDATE_DIR="%~dp0"
+set RUNNER="%TEMP%\update_runner.bat"
 
+echo =============================== >> %LOGFILE%
+echo BAT STARTED %date% %time% >> %LOGFILE%
+echo Current exe: {current_exe} >> %LOGFILE%
+echo New exe: {file_path} >> %LOGFILE%
 
-    timeout /t 3 /nobreak >nul
+:: Tạo runner để thực hiện cleanup
+echo @echo off > "%RUNNER%"
+echo timeout /t 4 /nobreak ^>nul >> "%RUNNER%"
+echo echo Cleaning up... ^>^> %LOGFILE% >> "%RUNNER%"
+echo rmdir /s /q %UPDATE_DIR% ^>^> %LOGFILE% 2^>^&1 >> "%RUNNER%"
+echo echo Restarting app... ^>^> %LOGFILE% >> "%RUNNER%"
+echo start "" "{current_exe}" >> "%RUNNER%"
+echo exit >> "%RUNNER%"
 
-    echo Deleting old exe... >> "{log_file}"
-    del /f /q "{current_exe}" >> "{log_file}" 2>&1
+echo Deleting old exe... >> %LOGFILE%
+del /f /q "{current_exe}" >> %LOGFILE% 2>&1
 
-    echo Copying new exe... >> "{log_file}"
-    move /y "{file_path}" "{current_exe}" >> "{log_file}" 2>&1
+echo Copying new exe... >> %LOGFILE%
+move /y "{file_path}" "{current_exe}" >> %LOGFILE% 2>&1
 
-    echo Restarting app... >> "{log_file}"
-    start "" "{current_exe}"
+echo Launching runner... >> %LOGFILE%
+start "" "%RUNNER%"
 
-    echo Cleaning temp folder... >> "{log_file}"
-    rmdir /s /q "{update_folder}" >> "{log_file}" 2>&1
-
-    echo DONE >> "{log_file}"
+exit
     '''
 
         try:

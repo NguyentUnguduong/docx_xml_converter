@@ -499,35 +499,85 @@ class UpdateDialog(QDialog):
             self.show_error(f"Không thể áp dụng cập nhật:\n{str(e)}")
             return
 
+    # def show_success_dialog(self, exe_path):
+    #     # Tạo dialog đơn giản
+    #     dialog = QDialog(self.parent())  # hoặc self nếu self là QWidget
+    #     dialog.setWindowTitle("Cập nhật thành công")
+    #     dialog.setModal(True)
+    #     dialog.resize(500, 150)
+
+    #     layout = QVBoxLayout()
+
+    #     label = QLabel(f"Ứng dụng đã được cập nhật thành công!\n.File exe cũ sẽ được lưu trong cùng đường dẫn. Nếu không cần thiết bạn có thể tự xóa.\nĐường dẫn:\n<code>{exe_path}</code>")
+    #     label.setTextFormat(Qt.TextFormat.RichText)
+    #     label.setWordWrap(True)
+    #     label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+
+    #     open_button = QPushButton("Mở ứng dụng")
+    #     exit_button = QPushButton("Thoát")
+
+    #     open_button.clicked.connect(lambda: self._launch_and_exit(exe_path))
+    #     exit_button.clicked.connect(dialog.reject)
+
+    #     button_layout = QHBoxLayout()
+    #     button_layout.addWidget(open_button)
+    #     button_layout.addWidget(exit_button)
+
+    #     layout.addWidget(label)
+    #     layout.addLayout(button_layout)
+    #     dialog.setLayout(layout)
+
+    #     dialog.exec()  # modal, chặn cho đến khi người dùng chọn
+
     def show_success_dialog(self, exe_path):
-        # Tạo dialog đơn giản
-        dialog = QDialog(self.parent())  # hoặc self nếu self là QWidget
-        dialog.setWindowTitle("Cập nhật thành công")
+        dialog = QDialog(self.parent())
+        dialog.setWindowTitle("✔ Cập nhật thành công")
         dialog.setModal(True)
-        dialog.resize(500, 150)
+        dialog.resize(520, 190)
 
-        layout = QVBoxLayout()
+        layout = QVBoxLayout(dialog)
+        layout.setContentsMargins(20, 20, 20, 20)
+        layout.setSpacing(15)
 
-        label = QLabel(f"Ứng dụng đã được cập nhật thành công!\n.File exe cũ sẽ được lưu trong cùng đường dẫn. Nếu không cần thiết bạn có thể tự xóa.\nĐường dẫn:\n<code>{exe_path}</code>")
+        # HTML đẹp – dễ đọc
+        info_html = f"""
+            <div style="font-size: 13px; line-height: 1.4;">
+                <b>Ứng dụng đã được cập nhật thành công!</b><br><br>
+                File <i>.exe</i> cũ đã được lưu lại trong cùng thư mục. 
+                Nếu không cần bạn có thể tự xóa.<br><br>
+                <b>Đường dẫn ứng dụng mới:</b><br>
+                <code style="font-size: 12px; color:#444;">{exe_path}</code>
+            </div>
+        """
+
+        label = QLabel(info_html)
         label.setTextFormat(Qt.TextFormat.RichText)
         label.setWordWrap(True)
         label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
 
+        # Nút
         open_button = QPushButton("Mở ứng dụng")
         exit_button = QPushButton("Thoát")
+
+        # Làm nút đẹp hơn
+        open_button.setMinimumWidth(130)
+        exit_button.setMinimumWidth(130)
+        open_button.setStyleSheet("padding: 6px 12px; font-size: 13px;")
+        exit_button.setStyleSheet("padding: 6px 12px; font-size: 13px;")
 
         open_button.clicked.connect(lambda: self._launch_and_exit(exe_path))
         exit_button.clicked.connect(dialog.reject)
 
         button_layout = QHBoxLayout()
+        button_layout.addStretch()
         button_layout.addWidget(open_button)
         button_layout.addWidget(exit_button)
 
         layout.addWidget(label)
         layout.addLayout(button_layout)
-        dialog.setLayout(layout)
 
-        dialog.exec()  # modal, chặn cho đến khi người dùng chọn
+        dialog.exec()
+
 
     def _launch_and_exit(self, exe_path):
         # Khởi động lại ứng dụng

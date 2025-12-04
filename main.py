@@ -386,82 +386,6 @@ class UpdateDialog(QDialog):
     def update_progress(self, value):
         self.progress_bar.setValue(value)
 
-    def on_download_finished(self, file_path):
-        self.status_label.setText("Đang áp dụng cập nhật...")
-
-        # Ghi version mới
-        self.update_local_version(self.latest_version)
-
-        current_exe = sys.executable
-        update_folder = self.update_folder
-        bat_script = os.path.join(update_folder, "update.bat")
-        log_file = os.path.join(update_folder, "update.log")
-
-        # Tạo nội dung batch an toàn + có taskkill + kiểm tra lỗi
-        bat_content = fr'''@echo off
-    chcp 65001 >nul
-
-    set "LOGFILE={log_file}"
-    set "UPDATE_FOLDER={update_folder}"
-    set "CURRENT_EXE={current_exe}"
-    set "NEW_EXE={file_path}"
-
-    echo =============================== >> "%LOGFILE%"
-    echo Update process started at %date% %time% >> "%LOGFILE%"
-    echo Current EXE: %CURRENT_EXE% >> "%LOGFILE%"
-    echo New EXE: %NEW_EXE% >> "%LOGFILE%"
-
-    :: Bước 1: Đóng ứng dụng (nếu còn chạy)
-    echo [INFO] Forcing close current application... >> "%LOGFILE%"
-    taskkill /F /IM "{os.path.basename(current_exe)}" >nul 2>&1
-    timeout /t 3 /nobreak >nul
-
-    :: Bước 2: Xóa file cũ (nếu tồn tại)
-    echo [INFO] Deleting old EXE... >> "%LOGFILE%"
-    del /f /q "%CURRENT_EXE%" >> "%LOGFILE%" 2>&1
-
-    :: Bước 3: Di chuyển file mới vào vị trí cũ
-    echo [INFO] Moving new EXE into place... >> "%LOGFILE%"
-    move /y "%NEW_EXE%" "%CURRENT_EXE%" >> "%LOGFILE%" 2>&1
-
-    :: Bước 4: Kiểm tra file mới có tồn tại không
-    if not exist "%CURRENT_EXE%" (
-        echo [ERROR] Failed to replace EXE! File not found. >> "%LOGFILE%"
-        echo [ERROR] Please run the new EXE manually from: %NEW_EXE% >> "%LOGFILE%"
-        pause
-        exit /b 1
-    )
-
-    echo [SUCCESS] EXE replaced successfully. >> "%LOGFILE%"
-
-    :: Bước 5: Khởi động lại ứng dụng
-    echo [INFO] Restarting application... >> "%LOGFILE%"
-    start "" "%CURRENT_EXE%" >> "%LOGFILE%" 2>&1
-
-    :: Bước 6: Dọn dẹp thư mục cập nhật sau 10 giây (chạy nền)
-    echo [INFO] Scheduling cleanup... >> "%LOGFILE%"
-    (
-        timeout /t 10 /nobreak >nul
-        rmdir /s /q "%UPDATE_FOLDER%" >nul 2>&1
-    ) >nul 2>&1 &
-
-    exit
-    '''
-
-        try:
-            with open(bat_script, "w", encoding="utf-8-sig") as f:
-                f.write(bat_content)
-
-            # Đảm bảo app hiện tại thoát hoàn toàn
-            self.accept()  # Đóng dialog
-            QApplication.quit()  # Đóng Qt
-            # Chạy batch script độc lập
-            subprocess.Popen([bat_script], shell=True, creationflags=subprocess.CREATE_NEW_CONSOLE)
-            sys.exit(0)  # Thoát hoàn toàn
-
-        except Exception as e:
-            self.show_error(f"Không thể áp dụng cập nhật:\n{str(e)}")    
-
     # def on_download_finished(self, file_path):
     #     self.status_label.setText("Đang áp dụng cập nhật...")
 
@@ -533,6 +457,83 @@ class UpdateDialog(QDialog):
 
     #     except Exception as e:
     #         self.show_error(f"Không thể áp dụng cập nhật:\n{str(e)}")
+
+    def on_download_finished(self, file_path):
+        self.status_label.setText("Đang áp dụng cập nhật...")
+
+        try:
+            # Ghi version mới
+            self.update_local_version(self.latest_version)
+
+            current_exe = sys.executable
+            update_folder = self.update_folder
+
+            # --- Bước 1: Xóa file hiện tại (exe đang chạy) ---
+            # Trên Windows, không thể xóa file đang chạy, nhưng có thể ghi đè!
+            # => Chúng ta sẽ đổi tên file hiện tại (nếu cần backup) hoặc ghi đè trực tiếp.
+
+            # Đổi tên file cũ để phòng trường hợp lỗi (tuỳ chọn)
+            backup_exe = current_exe + ".bak"
+            if os.path.exists(backup_exe):
+                os.remove(backup_exe)
+            os.rename(current_exe, backup_exe)
+
+            # --- Bước 2: Di chuyển file mới vào vị trí chính ---
+            shutil.move(file_path, current_exe)
+
+            # --- Bước 3: Xác minh file mới tồn tại ---
+            if not os.path.exists(current_exe):
+                raise RuntimeError("Không thể tạo file EXE mới.")
+
+            # --- Bước 4: Dọn dẹp thư mục cập nhật (sau khi thành công) ---
+            try:
+                shutil.rmtree(update_folder)
+            except Exception:
+                pass  # Bỏ qua nếu không xóa được (không quan trọng)
+
+            # --- Bước 5: Hiển thị UI thành công ---
+            self.show_success_dialog(current_exe)
+
+        except Exception as e:
+            self.show_error(f"Không thể áp dụng cập nhật:\n{str(e)}")
+            return
+
+    def show_success_dialog(self, exe_path):
+        # Tạo dialog đơn giản
+        dialog = QDialog(self.parent())  # hoặc self nếu self là QWidget
+        dialog.setWindowTitle("Cập nhật thành công")
+        dialog.setModal(True)
+        dialog.resize(500, 150)
+
+        layout = QVBoxLayout()
+
+        label = QLabel(f"Ứng dụng đã được cập nhật thành công!\nĐường dẫn:\n<code>{exe_path}</code>")
+        label.setTextFormat(Qt.TextFormat.RichText)
+        label.setWordWrap(True)
+        label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+
+        open_button = QPushButton("Mở ứng dụng")
+        exit_button = QPushButton("Thoát")
+
+        open_button.clicked.connect(lambda: self._launch_and_exit(exe_path))
+        exit_button.clicked.connect(dialog.reject)
+
+        button_layout = QHBoxLayout()
+        button_layout.addWidget(open_button)
+        button_layout.addWidget(exit_button)
+
+        layout.addWidget(label)
+        layout.addLayout(button_layout)
+        dialog.setLayout(layout)
+
+        dialog.exec()  # modal, chặn cho đến khi người dùng chọn
+
+    def _launch_and_exit(self, exe_path):
+        # Khởi động lại ứng dụng
+        subprocess.Popen([exe_path])
+        # Thoát ứng dụng hiện tại
+        QApplication.quit()
+        sys.exit(0)
 
     def on_download_error(self, error_msg):
         self.show_error(f"Lỗi khi tải cập nhật:\n{error_msg}")

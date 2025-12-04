@@ -360,22 +360,23 @@ class UpdateDialog(QDialog):
     def start_update(self):
         # Ẩn nút, hiện progress
         self.btn_update.hide()
-
         self.btn_later.hide()
-
         self.status_label.setText("Đang tải bản cập nhật...")
-
         self.status_label.show()
-
         self.progress_bar.show()
+        self.setFixedSize(450, 280)
 
-        self.setFixedSize(450, 280)  # mở rộng một chút để đủ chỗ
+        # Tạo thư mục TEMP/app_update
+        temp_root = tempfile.gettempdir()
+        update_folder = os.path.join(temp_root, "app_update")
 
-        # Tạo file tạm
-        temp_dir = tempfile.mkdtemp()
-        self.temp_exe_path = os.path.join(temp_dir, "new_app.exe")
+        os.makedirs(update_folder, exist_ok=True)
 
-        # Bắt đầu luồng tải
+        # File exe mới nằm trong thư mục tạm cố định
+        self.temp_exe_path = os.path.join(update_folder, "new_app.exe")
+        self.update_folder = update_folder
+
+        # Bắt đầu tải
         self.worker = DownloadWorker(self.download_url, self.temp_exe_path)
         self.worker.progress.connect(self.update_progress)
         self.worker.finished.connect(self.on_download_finished)
@@ -389,41 +390,48 @@ class UpdateDialog(QDialog):
         self.status_label.setText("Đang áp dụng cập nhật...")
 
         # Kiểm tra file hợp lệ
-    
+     
+
         # Ghi version mới
         self.update_local_version(self.latest_version)
 
-        # Tạo batch script
         current_exe = sys.executable
-
-        temp_dir = os.path.dirname(file_path)
-
-        bat_script = os.path.join(temp_dir, "update.bat")
+        update_folder = self.update_folder
+        bat_script = os.path.join(update_folder, "update.bat")
+        log_file = os.path.join(update_folder, "update.log")
 
         bat_content = f'''@echo off
-chcp 65001 >nul
-timeout /t 2 >nul
+    chcp 65001 >nul
 
-:retry
-del "{current_exe}" >nul 2>&1
-if exist "{current_exe}" (
-    timeout /t 1 >nul
-    goto retry
-)
+    echo =============================== >> "{log_file}"
+    echo BAT STARTED %date% %time% >> "{log_file}"
+    echo Current exe: {current_exe} >> "{log_file}"
+    echo New exe: {file_path} >> "{log_file}"
 
-move /y "{file_path}" "{current_exe}"
-start "" "{current_exe}"
-exit
-'''
+
+    timeout /t 3 /nobreak >nul
+
+    echo Deleting old exe... >> "{log_file}"
+    del /f /q "{current_exe}" >> "{log_file}" 2>&1
+
+    echo Copying new exe... >> "{log_file}"
+    move /y "{file_path}" "{current_exe}" >> "{log_file}" 2>&1
+
+    echo Restarting app... >> "{log_file}"
+    start "" "{current_exe}"
+
+    echo Cleaning temp folder... >> "{log_file}"
+    rmdir /s /q "{update_folder}" >> "{log_file}" 2>&1
+
+    echo DONE >> "{log_file}"
+    '''
 
         try:
             with open(bat_script, "w", encoding="utf-8-sig") as f:
                 f.write(bat_content)
 
             subprocess.Popen([bat_script], shell=True)
-
             self.accept()
-            
             sys.exit(0)
         except Exception as e:
             self.show_error(f"Không thể áp dụng cập nhật:\n{str(e)}")

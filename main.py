@@ -654,7 +654,7 @@ class MainWindow(QMainWindow):
     def init_ui(self):
         """Khởi tạo giao diện"""
         # ... (phần code UI cũ giữ nguyên) ...
-        self.setWindowTitle("Công cụ chuyển đổi file docx sang XML")
+        self.setWindowTitle("Tool chuyển đổi file Docx")
         self.setGeometry(100, 100, 1000, 700)
         
         # Widget chính

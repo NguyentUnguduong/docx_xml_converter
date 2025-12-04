@@ -615,7 +615,7 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(20, 20, 20, 20)
         
         # Header
-        header_label = QLabel("📄 Công cụ chuyển đổi từ file Docx sang file Xml")
+        header_label = QLabel("📄 Công cụ chuyển đổi từ file Docx sang file XML")
         header_label.setFont(QFont("Arial", 18, QFont.Bold))
         header_label.setAlignment(Qt.AlignCenter)
         header_label.setStyleSheet("""

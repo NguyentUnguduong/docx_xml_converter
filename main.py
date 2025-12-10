@@ -622,7 +622,7 @@ class MainWindow(QMainWindow):
         self.processing_thread = None
         self.detail_results_text = ""
         self.init_ui()
-        self.check_update_on_start()
+        # self.check_update_on_start()
 
     # def check_update_on_start(self):
     #     """Kiểm tra cập nhật ngay khi app mở"""

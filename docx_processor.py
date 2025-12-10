@@ -176,16 +176,27 @@ class DocxProcessor:
     def create_hoc_lieu_xml(self, hoc_lieu, index_hl):
         """Tạo XML cho học liệu"""
         item_doc = Element('itemDocument')
+
         questions_hl = [g for g in hoc_lieu['groupOfQ'] if g['questions']]
+
         sub_id = SubElement(item_doc, 'subjectId')
+
         sub_id.text = questions_hl[0]['subject'] if questions_hl else ''
+
         know_id = SubElement(item_doc, 'knowledgeId')
+
         know_id.text = questions_hl[0]['tag'] if questions_hl else ''
+
         group_material = SubElement(item_doc, 'groupQuestionMaterial')
+
         group_material.text = str(index_hl)
+
         content_html = SubElement(item_doc, 'contentHtml')
+
         html_content = self.xu_ly_hl(hoc_lieu['content'])
+
         content_html.text = html_content
+
         list_question = SubElement(item_doc, 'listQuestion')
         for group in questions_hl:
             # Gọi format_questions với danh sách lỗi
@@ -209,21 +220,34 @@ class DocxProcessor:
             try:
                 # Nếu container có cả paragraphs và tables → dùng cách chuẩn
                 if hasattr(container, "paragraphs") or hasattr(container, "tables"):
+
                     paragraphs = list(getattr(container, "paragraphs", []))
+
                     tables = list(getattr(container, "tables", []))
+
                     print(f"[DEBUG] Có {len(paragraphs)} paragraphs, {len(tables)} tables")
+
                     # Tạo list giữ thứ tự xuất hiện thật trong XML
                     body_elem = getattr(container, "_element", None)
+
                     if body_elem is None and hasattr(container, "_body"):
+
                         body_elem = getattr(container._body, "_element", None)
                     if body_elem is not None:
                         for child in body_elem.iterchildren():
+
                             if isinstance(child, CT_P):
+
                                 para = Paragraph(child, container)
+
                                 elements.append(para)
+
                             elif isinstance(child, CT_Tbl):
+
                                 tbl = DocxTable(child, container)
+
                                 elements.append(tbl)
+
                         print(f"[DEBUG] Trích xuất trực tiếp từ XML body: {len(elements)} phần tử")
                         return elements
                     else:
@@ -300,16 +324,30 @@ class DocxProcessor:
                 # 4️⃣ Xử lý ảnh inline / ngoài runs
                 try:
                     inline_imgs = p._element.xpath(".//a:blip/@r:embed")
+
                     for rId in inline_imgs:
+
                         tag = self._make_img_tag_from_rid(rId)
+
                         if tag:
                             html += tag
+
                 except Exception as e:
+
                     print(f"[WARN] Lỗi khi xử lý ảnh inline: {e}")
+
+                html = self.normalize_line_breaks(html)
+
+                return f"<p>{html}</p>"
+                
+            
             except Exception as e:
+
                 print(f"[ERROR] Lỗi convert_paragraph_to_html: {e}")
+
                 traceback.print_exc()
-            return f"<p>{html}</p>  "
+
+            # return f"<p>{html}</p>  "
         # =================== CHUẨN BỊ DANH SÁCH PHẦN TỬ ===================
         if isinstance(content, list):
             all_elements = content
@@ -339,6 +377,10 @@ class DocxProcessor:
         html = "".join(html_parts)
         print("[DEBUG] === KẾT THÚC HÀM xu_ly_hl ===")
         return html
+
+    def normalize_line_breaks(self, text: str) -> str:
+        """Chuyển mọi dạng xuống dòng (kể cả shift+enter) thành <br/>"""
+        return text.replace('\r\n', '<br/>').replace('\n', '<br/>').replace('\r', '<br/>')
 
     def convert_table_to_html(self, table: DocxTable) -> str:
         """
@@ -474,77 +516,210 @@ class DocxProcessor:
             questions_xml.append(each_question_xml)
 
 
-    def _get_image_tags_from_run(self, run):
-            """
-            Tìm image references trong run._r (blip / v:imagedata),
-            trả về list tag <img src="data:..."/> (base64).
-            """
-            imgs = []
-            try:
-                # truy cập vào phần XML thô của run
-                r = run._r
-                # 1) DrawingML blip (thường thấy với images chèn hiện đại)
-                blips = r.xpath('.//a:blip', namespaces={'a': 'http://schemas.openxmlformats.org/drawingml/2006/main'})
+    # def _get_image_tags_from_run(self, run):
+    #         """
+    #         Tìm image references trong run._r (blip / v:imagedata),
+    #         trả về list tag <img src="data:..."/> (base64).
+    #         """
+    #         imgs = []
+    #         try:
+    #             # truy cập vào phần XML thô của run
+    #             r = run._r
+    #             # 1) DrawingML blip (thường thấy với images chèn hiện đại)
+    #             blips = r.xpath('.//a:blip', namespaces={'a': 'http://schemas.openxmlformats.org/drawingml/2006/main'})
 
-                for blip in blips:
+    #             for blip in blips:
 
-                    # attribute chứa relationship id
-                    rId = blip.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed')
+    #                 # attribute chứa relationship id
+    #                 rId = blip.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed')
 
-                    if rId:
+    #                 if rId:
 
-                        img_tag = self._make_img_tag_from_rid(rId)
+    #                     img_tag = self._make_img_tag_from_rid(rId)
 
-                        if img_tag:
+    #                     if img_tag:
 
-                            imgs.append(img_tag)
-                # 2) VML (cũ hơn) - v:imagedata với attribute r:id
-                picts = r.xpath('.//v:imagedata', namespaces={'v': 'urn:schemas-microsoft-com:vml'})
+    #                         imgs.append(img_tag)
+    #             # 2) VML (cũ hơn) - v:imagedata với attribute r:id
+    #             picts = r.xpath('.//v:imagedata', namespaces={'v': 'urn:schemas-microsoft-com:vml'})
 
-                for pict in picts:
+    #             for pict in picts:
 
-                    rId = pict.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id')
+    #                 rId = pict.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id')
 
-                    if rId:
+    #                 if rId:
 
-                        img_tag = self._make_img_tag_from_rid(rId)
+    #                     img_tag = self._make_img_tag_from_rid(rId)
 
-                        if img_tag:
+    #                     if img_tag:
 
-                            imgs.append(img_tag)
-            except Exception:
-                # im lặng nếu không tìm thấy hoặc lỗi, tránh crash
-                pass
-            return imgs
+    #                         imgs.append(img_tag)
+    #         except Exception:
+    #             # im lặng nếu không tìm thấy hoặc lỗi, tránh crash
+    #             pass
+    #         return imgs
 
  
+    # def _make_img_tag_from_rid(self, rId):
+    #     """
+    #     Dùng rId để lấy image part từ self.doc.part.related_parts,
+    #     trả về một thẻ <img src="data:..."> hoặc None.
+    #     """
+    #     try:
+    #         part = self.doc.part.related_parts.get(rId)
 
-    def _make_img_tag_from_rid(self, rId):
+    #         if not part:
+    #             # fallback: tìm trong các rels
+    #             for rel in self.doc.part.rels.values():
+    #                 try:
+    #                     target = getattr(rel, 'target_part', None)
+    #                     if target and 'image' in getattr(target, 'content_type', ''):
+    #                         if rel.rId == rId:
+    #                             part = target
+    #                             break
+    #                 except Exception:
+    #                     continue
+
+    #         if not part:
+    #             print(f"[DEBUG] Không tìm thấy part cho rId={rId}")
+    #             return None
+
+    #         img_bytes = part.blob
+    #         content_type = getattr(part, 'content_type', 'image/png')
+
+    #         # --- ĐỌC KÍCH THƯỚC GỐC & RESIZE NẾU CẦN ---
+    #         img = Image.open(BytesIO(img_bytes))
+    #         original_width, original_height = img.size
+    #         print(f"[DEBUG] Ảnh rId={rId} kích thước gốc: {original_width}x{original_height}")
+
+    #         max_width = 350
+    #         max_height = 350
+    #         ratio = min(max_width / original_width, max_height / original_height)
+
+    #         if ratio < 1:
+    #             new_width = int(original_width * ratio)
+    #             new_height = int(original_height * ratio)
+    #             print(f"[DEBUG] Ảnh rId={rId} sau khi resize: {new_width}x{new_height}")
+    #             img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
+    #         else:
+    #             new_width, new_height = original_width, original_height
+
+    #         # --- LƯU ẢNH SAU RESIZE VÀO BYTES (KHÔNG NÉN, GIỮ NGUYÊN FORMAT) ---
+    #         output = BytesIO()
+    #         img_format = img.format or 'PNG'
+    #         img.save(output, format=img_format, optimize=False)
+    #         resized_img_bytes = output.getvalue()
+    #         output.close()
+
+    #         # --- ENCODE BASE64 ---
+    #         b64 = base64.b64encode(resized_img_bytes).decode('ascii')
+
+    #         # --- SINH TAG HTML ---
+    #         style = f'style="width:{new_width}px; height:{new_height}px;"'
+    #         return f'<center><img src="data:{content_type};base64,{b64}" {style} /></center>'
+
+    #     except Exception as e:
+    #         print(f"[ERROR] _make_img_tag_from_rid lỗi: {e}")
+    #         import traceback
+    #         traceback.print_exc()
+    #         return None    
+   
+
+    def _get_image_tags_from_run(self, run):
         """
-        Dùng rId để lấy image part từ self.doc.part.related_parts,
-        trả về một thẻ <img src="data:..."> hoặc None.
+        Tìm image references trong run._r (blip / v:imagedata),
+        trả về list tag <img src="data:..."/> (base64).
+        Kích thước theo đơn vị POINTS để khớp với GAS.
+        """
+        imgs = []
+        try:
+            r = run._r
+            
+            # Đăng ký namespaces
+            from lxml import etree
+            nsmap = {
+                'a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
+                'wp': 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing',
+                'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships',
+                'v': 'urn:schemas-microsoft-com:vml'
+            }
+            
+            # 1) DrawingML blip (thường thấy với images chèn hiện đại)
+            # Tìm extent để lấy kích thước display
+            extents = r.findall('.//wp:extent', nsmap)
+            blips = r.findall('.//a:blip', nsmap)
+
+            for idx, blip in enumerate(blips):
+                rId = blip.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed')
+                
+                if rId:
+                    # Lấy kích thước display từ extent (nếu có)
+                    display_width, display_height = None, None
+                    if idx < len(extents):
+                        extent = extents[idx]
+                        # EMU (English Metric Units): 914400 EMU = 1 inch, 1 inch = 72 points
+                        cx = extent.get('cx')  # width in EMU
+                        cy = extent.get('cy')  # height in EMU
+                        if cx and cy:
+                            # Chuyển từ EMU sang POINTS (914400 EMU = 1 inch = 72 pt)
+                            display_width = int(int(cx) / 914400 * 72)
+                            display_height = int(int(cy) / 914400 * 72)
+                    
+                    img_tag = self._make_img_tag_from_rid(rId, display_width, display_height)
+                    if img_tag:
+                        imgs.append(img_tag)
+            
+            # 2) VML (cũ hơn) - v:imagedata với attribute r:id
+            picts = r.findall('.//v:imagedata', nsmap)
+
+            for pict in picts:
+                rId = pict.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id')
+                
+                if rId:
+                    # VML thường có style="width:XXpt;height:YYpt" ở parent shape
+                    display_width, display_height = None, None
+                    shape = pict.getparent()
+                    if shape is not None:
+                        style = shape.get('style', '')
+                        # Parse style để lấy width/height (đã ở dạng points)
+                        import re
+                        width_match = re.search(r'width:\s*(\d+(?:\.\d+)?)pt', style)
+                        height_match = re.search(r'height:\s*(\d+(?:\.\d+)?)pt', style)
+                        if width_match and height_match:
+                            # Giữ nguyên đơn vị points
+                            display_width = int(float(width_match.group(1)))
+                            display_height = int(float(height_match.group(1)))
+                    
+                    img_tag = self._make_img_tag_from_rid(rId, display_width, display_height)
+                    if img_tag:
+                        imgs.append(img_tag)
+                        
+        except Exception as e:
+            print(f"[ERROR] _get_image_tags_from_run: {e}")
+            import traceback
+            traceback.print_exc()
+        return imgs
+
+
+    def _make_img_tag_from_rid(self, rId, display_width=None, display_height=None):
+        """
+        Dùng rId để lấy image part, sử dụng display_width/height (POINTS) nếu có,
+        nếu không thì dùng kích thước gốc với max constraint (POINTS).
         """
         try:
             part = self.doc.part.related_parts.get(rId)
 
             if not part:
-
-                # fallback: tìm trong các rels
                 for rel in self.doc.part.rels.values():
-
                     try:
-
                         target = getattr(rel, 'target_part', None)
-
                         if target and 'image' in getattr(target, 'content_type', ''):
-
                             if rel.rId == rId:
-
                                 part = target
-
                                 break
                     except Exception:
                         continue
+
             if not part:
                 print(f"[DEBUG] Không tìm thấy part cho rId={rId}")
                 return None
@@ -552,80 +727,63 @@ class DocxProcessor:
             img_bytes = part.blob
             content_type = getattr(part, 'content_type', 'image/png')
 
-            # --- ĐỌC KÍCH THƯỚC GỐC ---
-            try:
-                img = Image.open(BytesIO(img_bytes))
-                original_width, original_height = img.size
-                print(f"[DEBUG] Ảnh rId={rId} kích thước gốc: {original_width}x{original_height}")
+            # Đọc ảnh
+            img = Image.open(BytesIO(img_bytes))
+            original_width_px, original_height_px = img.size
+            print(f"[DEBUG] Ảnh rId={rId} kích thước gốc: {original_width_px}x{original_height_px} pixels")
 
-                # --- GIỚI HẠN KÍCH THƯỚC ẢNH ---
-                max_width = 800
-                max_height = 800
-
-                # Tính tỷ lệ giữ nguyên tỷ lệ khung hình (aspect ratio)
-                ratio = min(max_width / original_width, max_height / original_height)
-
+            # Nếu có display size từ Word (đơn vị POINTS), dùng nó
+            if display_width and display_height:
+                width_pt = display_width
+                height_pt = display_height
+                print(f"[DEBUG] Dùng kích thước từ Word XML: {width_pt}x{height_pt} points")
+            else:
+                # Fallback: chuyển pixel gốc sang points (giả sử 96 DPI)
+                # 1 inch = 72 points = 96 pixels => 1 pixel = 0.75 points
+                original_width_pt = original_width_px * 0.75
+                original_height_pt = original_height_px * 0.75
+                
+                # Áp dụng max constraint (trong points)
+                max_width_pt = 350 * 0.75  # ~262.5 pt
+                max_height_pt = 350 * 0.75  # ~262.5 pt
+                ratio = min(max_width_pt / original_width_pt, max_height_pt / original_height_pt)
+                
                 if ratio < 1:
-                    new_width = int(original_width * ratio)
-                    new_height = int(original_height * ratio)
-                    print(f"[DEBUG] Ảnh rId={rId} sau khi resize: {new_width}x{new_height}")
-
-                    # Resize ảnh
-                    img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-                    # hoặc Image.Resampling.LANCZOS nếu dùng Pillow >= 10
+                    width_pt = int(original_width_pt * ratio)
+                    height_pt = int(original_height_pt * ratio)
                 else:
-                    new_width = original_width
-                    new_height = original_height
+                    width_pt = int(original_width_pt)
+                    height_pt = int(original_height_pt)
+                print(f"[DEBUG] Dùng max constraint: {width_pt}x{height_pt} points")
 
-            except Exception as e:
-                print(f"[WARN] Không đọc được kích thước ảnh: {e}")
-                return None  # Không xử lý được ảnh, trả về None
+            # Chuyển points sang pixels để resize ảnh (1 point = 96/72 pixels = 1.333...)
+            new_width_px = int(width_pt * 96 / 72)
+            new_height_px = int(height_pt * 96 / 72)
 
-            # --- GHIẢM KÍCH THƯỚC FILE (nếu cần) ---
+            # Resize ảnh
+            if (new_width_px, new_height_px) != (original_width_px, original_height_px):
+                img = img.resize((new_width_px, new_height_px), Image.Resampling.LANCZOS)
+
+            # Lưu ảnh
             output = BytesIO()
             img_format = img.format or 'PNG'
-
-            # Nếu là ảnh JPEG, có thể nén với chất lượng
-            if img_format in ('JPEG', 'JPG'):
-                img.save(output, format=img_format, quality=80, optimize=True)
-            else:
-                # Với PNG, có thể nén nhẹ hơn, hoặc chuyển sang JPEG nếu cần giảm size
-                img.save(output, format=img_format, optimize=True)
-
+            img.save(output, format=img_format, optimize=False)
             resized_img_bytes = output.getvalue()
             output.close()
 
-            # --- KIỂM TRA KÍCH THƯỚC FILE ---
-            max_file_size = 1 * 1024 * 1024  # 1MB
-            if len(resized_img_bytes) > max_file_size:
-                print(f"[DEBUG] Ảnh rId={rId} quá lớn ({len(resized_img_bytes)} bytes), chuyển sang JPEG để nén hơn...")
-                # Chuyển sang JPEG để giảm dung lượng
-                output_jpg = BytesIO()
-                if img.mode in ('RGBA', 'P') and img_format == 'PNG':
-                    # Chuyển RGBA sang RGB để lưu JPEG
-                    if img.mode == 'P':
-                        img = img.convert("RGBA")
-                    if img.mode == 'RGBA':
-                        background = Image.new('RGB', img.size, (255, 255, 255))
-                        background.paste(img, mask=img.split()[-1])
-                        img = background
-                img.save(output_jpg, format='JPEG', quality=75, optimize=True)
-                resized_img_bytes = output_jpg.getvalue()
-                output_jpg.close()
-
-            # --- ENCODE BASE64 ---
+            # Encode base64
             b64 = base64.b64encode(resized_img_bytes).decode('ascii')
 
-            # --- SINH TAG HTML ---
-            style = f'style="width:{new_width}px; height:{new_height}px;"'
-            return f'<center><img src="data:{content_type};base64,{b64}" {style} /></center>'
+            # Sinh tag HTML với kích thước POINTS (giống GAS)
+            # Lưu ý: CSS hỗ trợ đơn vị pt trực tiếp
+            style = f'style="width:{width_pt}px; height:{height_pt}px;"'
+            return f'<center><img {style} src="data:{content_type};base64,{b64}" /></center>'
 
         except Exception as e:
             print(f"[ERROR] _make_img_tag_from_rid lỗi: {e}")
-            import traceback; traceback.print_exc()
+            import traceback
+            traceback.print_exc()
             return None
-
-
     def protocol_of_q(self, question, each_question_xml, subject, errors, question_index):
         """Phân tích cấu trúc câu hỏi, nhận danh sách errors và số thứ tự câu hỏi question_index"""
         # Chia thành phần: nội dung câu hỏi và lời giải
@@ -674,22 +832,73 @@ class DocxProcessor:
 
         # Phân tích nội dung câu hỏi và lời giải
         thanh_phan_cau_hoi = []
+
         link_cau_hoi = []
         # Xử lý links và nội dung
-        for para in thanh_phan_1q[0]:
+        # for para in thanh_phan_1q[0]:
+
+        #     if isinstance(para, Paragraph):
+
+        #         text = para.text.strip()
+
+        #         # Phát hiện Audio
+        #         if text.startswith('Audio:'):
+
+        #             link_cau_hoi.append(text)
+
+        #             continue
+        #         # Phát hiện URLs
+        #         urls = re.findall(r'https?://[^\s]+', text)
+
+        #         for url in urls:
+
+        #             if url not in link_cau_hoi:
+
+        #                 link_cau_hoi.append(url)
+
+        #         if urls and not text.replace(urls[0], '').strip():
+
+        #             continue
+
+        #     thanh_phan_cau_hoi.append(para)
+
+        for idx, para in enumerate(thanh_phan_1q[0]):
             if isinstance(para, Paragraph):
                 text = para.text.strip()
-                # Phát hiện Audio
+                # ——— XỬ LÝ DÒNG BẮT ĐẦU BẰNG "Audio:" ———
                 if text.startswith('Audio:'):
-                    link_cau_hoi.append(text)
+                    audio_content = text[6:].strip()
+                    print(f">>>>>> debug audio content: {audio_content}")
+                    # Nếu ngay sau có link hợp lệ → dùng luôn
+                    if audio_content.startswith('https'):
+                        link_cau_hoi.append(f'Audio:{audio_content}')
+                    else:
+                        # Nếu không, kiểm tra paragraph tiếp theo có URL không
+                        if idx + 1 < len(thanh_phan_1q[0]):
+                            next_para = thanh_phan_1q[0][idx + 1]
+                            if isinstance(next_para, Paragraph):
+                                next_text = next_para.text.strip()
+                                # Kiểm tra link thuần hoặc link có hyperlink (giả lập: chỉ kiểm tra text)
+                                if next_text.startswith('https'):
+                                    link_cau_hoi.append(f'Audio:{next_text}')
+                                    # Bỏ qua para tiếp theo trong nội dung chính
+                                    # (nhưng vẫn giữ nguyên logic append → sẽ loại sau)
+                    continue  # Dù thế nào cũng không đưa "Audio:" vào nội dung chính
+
+                # ——— XỬ LÝ URL THUẦN TRONG ĐOẠN VĂN ———
+                # Tìm mọi URL hợp lệ trong text (kể cả link bị kèm chữ)
+                url_matches = re.findall(r'https?://[^\s]+', text)
+                found_valid_url = False
+                for url in url_matches:
+                    url_clean = url.rstrip('.,;:')
+                    if url_clean not in [link.replace('Audio:', '', 1) for link in link_cau_hoi]:
+                        link_cau_hoi.append(url_clean)
+                        found_valid_url = True
+                # Nếu URL đứng riêng (không kèm text quan trọng), không thêm vào nội dung
+                if url_matches and not text[:text.find(url_matches[0])].strip():
                     continue
-                # Phát hiện URLs
-                urls = re.findall(r'https?://[^\s]+', text)
-                for url in urls:
-                    if url not in link_cau_hoi:
-                        link_cau_hoi.append(url)
-                if urls and not text.replace(urls[0], '').strip():
-                    continue
+
+            # Thêm vào nội dung chính nếu không phải dòng audio hoặc link thuần
             thanh_phan_cau_hoi.append(para)
 
         # Xử lý links
@@ -697,22 +906,35 @@ class DocxProcessor:
 
         # Phân tích lời giải
         thanh_phan_hdg = []
+
         link_speech_explain = []
+
         for idx, para in enumerate(thanh_phan_1q[1]):
             if idx == 0:
+
                 thanh_phan_hdg.append([para])
                 continue
+
             if isinstance(para, Paragraph):
+
                 text = para.text.strip()
+
                 if text.startswith('###'):
+
                     thanh_phan_hdg.append([])
+
                     continue
                 # URLs trong HDG
                 urls = re.findall(r'https?://[^\s]+', text)
+
                 for url in urls:
+
                     link_speech_explain.append(url)
+
                     continue
+
             if thanh_phan_hdg:
+
                 thanh_phan_hdg[-1].append(para)
 
         # Xử lý urlSpeechExplain
@@ -731,8 +953,22 @@ class DocxProcessor:
 
         # Xác định dạng câu hỏi
         answer = thanh_phan_hdg[0][0].text.strip() if thanh_phan_hdg[0] else ''
+
         cau_sau_xu_ly = [thanh_phan_cau_hoi, thanh_phan_hdg]
-        audio = [link for link in link_cau_hoi if 'Audio:' in link]
+
+        # audio = [link for link in link_cau_hoi if 'Audio:' in link]
+        audio = []
+
+        for item in question:
+
+            if isinstance(item, Paragraph):
+
+                txt = item.text.strip()
+                if txt.startswith('Audio:'):
+                    print(f">>>>>> debug txt have audio {txt}")
+
+                    # audio.append(txt)
+
         # Routing theo subject
         if self.is_tinhoc_subject(subject):
             self.route_to_tinhoc_module(cau_sau_xu_ly, each_question_xml, audio, answer, subject, errors, question_index)
@@ -769,27 +1005,102 @@ class DocxProcessor:
         else:
             self.dang_tl(cau_sau_xu_ly, xml, audio)
 
-    def xu_ly_link_cau_hoi(self, links: str, xml):
-        """Xử lý links trong câu hỏi"""
+    # def xu_ly_link_cau_hoi(self, links: str, xml):
+    #     """Xử lý links trong câu hỏi"""
+    #     one_tts = False
+
+    #     one_media = False
+
+    #     for link in links:
+
+    #         if link.startswith('Audio:'):
+
+    #             continue
+
+    #         if link.endswith(('.mp3', '.mp4')):
+
+    #             if one_tts:
+
+    #                 # raise ValueError(f"Chỉ được 1 link TTS: {link}")
+    #                 print(f"[WARN] Có nhiều hơn 1 link TTS trong câu hỏi, bỏ qua: {link}")
+
+    #                 continue
+
+    #             SubElement(xml, 'urlSpeechContent').text = link
+
+    #             one_tts = True
+    #         else:
+    #             if one_media:
+
+    #                 # raise ValueError(f"Chỉ được 1 link Video: {link}")
+    #                 print(f"[WARN] Có nhiều hơn 1 link Video trong câu hỏi, bỏ qua: {link}")
+
+    #                 continue
+
+    #             if 'vimeo.com' in link:
+
+    #                 code = link.split('vimeo.com/')[1]
+
+    #                 parts = code.split('/')
+
+    #                 if len(parts) > 1:
+
+    #                     code = f"{parts[0]}?h={parts[1].split('?share')[0]}"
+    #                 else:
+    #                     code = parts[0]
+
+    #                 SubElement(xml, 'contentMedia').text = code
+
+    #                 SubElement(xml, 'typeContentMedia').text = 'CodeVimeo'
+
+    #                 one_media = True
+
+    #             elif 'youtu' in link:
+
+    #                 if 'watch?v=' in link:
+
+    #                     code = link.split('watch?v=')[1]
+
+    #                 elif 'youtu.be/' in link:
+
+    #                     code = link.split('youtu.be/')[1].split('?')[0]
+
+    #                 else:
+    #                     continue
+    #                 SubElement(xml, 'contentMedia').text = code
+
+    #                 SubElement(xml, 'typeContentMedia').text = 'CodeYouTuBe'
+    #                 one_media = True
+
+    def xu_ly_link_cau_hoi(self, links: List[str], xml):
+        """Xử lý links trong câu hỏi — ĐÃ CẬP NHẬT LOGIC TTS"""
         one_tts = False
         one_media = False
         for link in links:
+            # ——— Chuẩn hóa link ———
+            clean_link = link
             if link.startswith('Audio:'):
+                clean_link = link[6:].strip()
+            else:
+                clean_link = link.strip()
+
+            # Bỏ qua nếu rỗng
+            if not clean_link:
                 continue
-            if link.endswith(('.mp3', '.mp4')):
+
+            # ——— PHÂN LOẠI LINK ———
+            if clean_link.endswith(('.mp3', '.mp4')):
                 if one_tts:
-                    # raise ValueError(f"Chỉ được 1 link TTS: {link}")
-                    print(f"[WARN] Có nhiều hơn 1 link TTS trong câu hỏi, bỏ qua: {link}")
+                    print(f"[WARN] Có nhiều hơn 1 link TTS trong câu hỏi, bỏ qua: {clean_link}")
                     continue
-                SubElement(xml, 'urlSpeechContent').text = link
+                SubElement(xml, 'urlSpeechContent').text = clean_link
                 one_tts = True
             else:
                 if one_media:
-                    # raise ValueError(f"Chỉ được 1 link Video: {link}")
-                    print(f"[WARN] Có nhiều hơn 1 link Video trong câu hỏi, bỏ qua: {link}")
+                    print(f"[WARN] Có nhiều hơn 1 link Video trong câu hỏi, bỏ qua: {clean_link}")
                     continue
-                if 'vimeo.com' in link:
-                    code = link.split('vimeo.com/')[1]
+                if 'vimeo.com' in clean_link:
+                    code = clean_link.split('vimeo.com/')[1]
                     parts = code.split('/')
                     if len(parts) > 1:
                         code = f"{parts[0]}?h={parts[1].split('?share')[0]}"
@@ -798,11 +1109,11 @@ class DocxProcessor:
                     SubElement(xml, 'contentMedia').text = code
                     SubElement(xml, 'typeContentMedia').text = 'CodeVimeo'
                     one_media = True
-                elif 'youtu' in link:
-                    if 'watch?v=' in link:
-                        code = link.split('watch?v=')[1]
-                    elif 'youtu.be/' in link:
-                        code = link.split('youtu.be/')[1].split('?')[0]
+                elif 'youtu' in clean_link:
+                    if 'watch?v=' in clean_link:
+                        code = clean_link.split('watch?v=')[1]
+                    elif 'youtu.be/' in clean_link:
+                        code = clean_link.split('youtu.be/')[1].split('?')[0]
                     else:
                         continue
                     SubElement(xml, 'contentMedia').text = code
@@ -954,9 +1265,13 @@ class DocxProcessor:
         listanswers = SubElement(xml, 'listanswers')
         for i, para in enumerate(answers_part):
             # Bỏ prefix A./B./C./D.
-            text = re.sub(r'^[A-Z]\.\s*', '', para.text.strip())
+            # text = re.sub(r'^[A-Z]\.\s*', '', para.text.strip())
 
-            content_html = f'<p>{text}</p>'
+            # content_html = f'<p>{text}</p>
+
+            content_html = self.convert_content_to_html([para])
+
+            content_html = re.sub(r'^\s*(?:<[^>]*>)*[A-Z]\.\s*(?:<[^>]*>)*', '', content_html, flags=re.IGNORECASE)
 
             answer_el = SubElement(listanswers, 'answer')
 
@@ -1455,6 +1770,7 @@ class DocxProcessor:
                             html_content += img_tag
                 except Exception:
                     pass
+        html_content = self.normalize_line_breaks(html_content)        
         new_children.append(html_content.strip())
 
     def escape_html(self, text):

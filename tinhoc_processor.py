@@ -424,7 +424,7 @@ class TinHocProcessor:
                         
                         if get_element_type(child) == 'TEXT':
                             text = get_text(child).strip()
-                            if re.match(r'^[A-Da-d]\.', text):
+                            if re.match(r'^[A-Za-z]\.', text):
                                 tmp_raw.append([child])
                             elif tmp_raw:
                                 tmp_raw[-1].append(child)

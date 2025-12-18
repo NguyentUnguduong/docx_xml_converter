@@ -7,6 +7,8 @@ from io import BytesIO
 from docx import Document
 from docx.oxml.text.paragraph import CT_P
 from docx.oxml.table import CT_Tbl
+from docx.oxml import parse_xml
+from docx.oxml.ns import qn
 from docx.table import Table as DocxTable, _Cell
 from docx.table import Table 
 from docx.text.paragraph import Paragraph
@@ -47,8 +49,8 @@ class DocxProcessor:
     def __init__(self):
         self.subjects_with_default_titles = [
             "TOANTHPT", "VATLITHPT2", "HOATHPT2", "SINHTHPT2",
-            "LICHSUTHPT", "DIALITHPT", "GDCDTHPT2", "NGUVANTHPT",
-            "TOANTHCS2", "KHTN", "KHXHTHCS", "GDCDTHCS2", "NGUVANTHCS2", "DGNLDHQGHN"
+            "LICHSUTHPT", "DIALITHPT", "GDCDTHPT2", "NGUVANTHPT","VATLYTHPT2",
+            "TOANTHCS2", "KHTN", "KHXHTHCS", "GDCDTHCS2", "NGUVANTHCS2", "DGNLDHQGHN","DETHI"
         ]
         self.tinhoc_subjects = ['TINHOCTHPT', 'TINHOC3']
         self.index_question = 0
@@ -59,118 +61,154 @@ class DocxProcessor:
         'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
     }
 
+   
     def process_docx(self, file_path):
         """Xử lý file DOCX và trả về XML string hoặc danh sách lỗi"""
-        # Thêm danh sách lỗi cho file này
         errors = []
-        doc = Document(file_path)
-        self.doc = doc  # Lưu document để truy cập parts
-        self.tinhoc_processor.doc = self.doc
-        body = doc.element.body
-        # Parse các elements
-        paragraphs = []
-        for child in body:
-            if isinstance(child, CT_P):
-                paragraphs.append(Paragraph(child, doc))
-            elif isinstance(child, CT_Tbl):
-                paragraphs.append(Table(child, doc))
+        doc = None
+        try:
+            print(f">>>>> Debug file path {file_path}")
+            doc = Document(file_path)
+            self.doc = doc
+            self.tinhoc_processor.doc = self.doc
+            body = doc.element.body
 
-        # Phân tích cấu trúc
-        list_hl = []
-        group_of_questions = []
-        current_tag = None
-        current_table = None
-        content_hl = False
-        for idx, para in enumerate(paragraphs):
-            is_table = isinstance(para, Table)
-            # Xử lý table
-            if is_table:
-                current_table = para
-                if group_of_questions and group_of_questions[-1]['questions']:
-                    group_of_questions[-1]['questions'].append(current_table)
-                continue
-            # Paragraph rỗng
-            if len(para.runs) == 0:
-                continue
-            text = para.text.strip()
-            # Phát hiện header [tag, posttype, level]
-            if re.match(r'^\[.*\]$', text):
-                header = text.replace('[', '').replace(']', '')
-                fields = [f.strip() for f in header.split(',')]
-                if len(fields) != 3:
-                    # raise ValueError(f"Sai format header: {text}")
-                    errors.append(f"Sai format header: {text}")
-                    continue # Bỏ qua header lỗi, tiếp tục
-                dvkt, posttype, knowledge = fields
-                current_tag = dvkt
-                cap_do = ['NB', 'TH', 'VD', 'VDC']
-                knowledge_upper = knowledge.upper()
-                level = cap_do.index(knowledge_upper) if knowledge_upper in cap_do else 0
-                group = {
-                    'subject': dvkt.split('_')[0],
-                    'tag': dvkt,
-                    'original_tag': dvkt,
-                    'posttype': posttype,
-                    'knowledgelevel': knowledge_upper if knowledge_upper in cap_do else 'NB',
-                    'level': level,
-                    'questions': []
-                }
-                # Kiểm tra trùng lặp
-                group_of_questions.append(group)
-            # Phát hiện học liệu
-            if text.startswith('HL:'):
+            # Parse các elements theo thứ tự trong body
+            paragraphs = []
+            try:
+                for child in body:
+                    if isinstance(child, CT_P):
+                        paragraphs.append(Paragraph(child, doc))
+                    elif isinstance(child, CT_Tbl):
+                        paragraphs.append(Table(child, doc))
+            except Exception as e:
+                errors.append(f"Lỗi khi đọc cấu trúc body của DOCX: {str(e)}")
+                return "", errors
+
+            # Biến trạng thái
+            list_hl = []
+            group_of_questions = []
+            current_tag = None
+            current_table = None
+            content_hl = False  # Trạng thái đang trong khối học liệu (sau HL:)
+
+            for idx, para in enumerate(paragraphs):
+                try:
+                    is_table = isinstance(para, Table)
+
+                    # Xử lý table
+                    if is_table:
+                        current_table = para
+                        if group_of_questions and group_of_questions[-1]['questions']:
+                            group_of_questions[-1]['questions'].append(current_table)
+                        continue
+
+                    # Bỏ qua paragraph rỗng
+                    if len(para.runs) == 0:
+                        continue
+
+                    text = para.text.strip()
+
+                    # ——— ƯU TIÊN 1: XỬ LÝ HEADER [tag, posttype, level] ———
+                    if re.match(r'^\[.*\]$', text):
+                        header = text.replace('[', '').replace(']', '')
+                        fields = [f.strip() for f in header.split(',')]
+                        if len(fields) != 3:
+                            errors.append(f"Sai format header tại dòng {idx + 1}: {text}")
+                            continue
+
+                        dvkt, posttype, knowledge = fields
+                        current_tag = dvkt
+                        cap_do = ['NB', 'TH', 'VD', 'VDC']
+                        knowledge_upper = knowledge.upper()
+                        level = cap_do.index(knowledge_upper) if knowledge_upper in cap_do else 0
+
+                        group = {
+                            'subject': dvkt.split('_')[0],
+                            'tag': dvkt,
+                            'original_tag': dvkt,
+                            'posttype': posttype,
+                            'knowledgelevel': knowledge_upper if knowledge_upper in cap_do else 'NB',
+                            'level': level,
+                            'questions': []
+                        }
+                        group_of_questions.append(group)
+                        content_hl = False
+                        continue
+
+                    # ——— ƯU TIÊN 2: XỬ LÝ DÒNG BẮT ĐẦU BẰNG "HL:" ———
+                    if text.startswith('HL:'):
+                        if list_hl:
+                            prev_group = group_of_questions[-1]
+                            group_of_questions = [{
+                                'subject': prev_group['subject'],
+                                'tag': prev_group['tag'],
+                                'posttype': prev_group['posttype'],
+                                'knowledgelevel': prev_group['knowledgelevel'],
+                                'level': prev_group['level'],
+                                'questions': []
+                            }]
+
+                        hoc_lieu = {
+                            'content': [para],
+                            'groupOfQ': group_of_questions
+                        }
+                        content_hl = True
+                        list_hl.append(hoc_lieu)
+                        continue
+
+                    # ——— ƯU TIÊN 3: PHÁT HIỆN CÂU HỎI MỚI ———
+                    if re.match(r'^C[âa]u\s*\d', text, re.IGNORECASE):
+                        content_hl = False
+
+                    # ——— THÊM VÀO NỘI DUNG HỌC LIỆU (NẾU ĐANG TRONG CHẾ ĐỘ HL) ———
+                    if content_hl and list_hl:
+                        list_hl[-1]['content'].append(para)
+                        continue
+
+                    # ——— THÊM VÀO CÂU HỎI THƯỜNG ———
+                    if group_of_questions:
+                        para.current_tag = current_tag
+                        group_of_questions[-1]['questions'].append(para)
+
+                except Exception as e:
+                    import traceback
+                    errors.append(f"Lỗi khi xử lý paragraph #{idx} (text: {getattr(para, 'text', 'N/A')[:50]}...): {str(e)}")
+                    # In traceback nếu cần debug sâu (tùy chọn)
+                    # traceback.print_exc()
+                    continue  # tiếp tục xử lý các phần còn lại
+
+            # Tạo XML
+            try:
                 if list_hl:
-                    prev_group = group_of_questions[-1]
-                    group_of_questions = [{
-                        'subject': prev_group['subject'],
-                        'tag': prev_group['tag'],
-                        'posttype': prev_group['posttype'],
-                        'knowledgelevel': prev_group['knowledgelevel'],
-                        'level': prev_group['level'],
-                        'questions': []
-                    }]
-                hoc_lieu = {
-                    'content': [para],
-                    'groupOfQ': group_of_questions
-                }
-                content_hl = True
-                list_hl.append(hoc_lieu)
-                continue
-            # Phát hiện câu hỏi
-            if re.match(r'^C[ââ]u.\d', text, re.IGNORECASE):
-                content_hl = False
-            # Thêm vào content
-            if content_hl and list_hl:
-                list_hl[-1]['content'].append(para)
-                continue
-            if group_of_questions:
-                # Gán tag cho question
-                if hasattr(para, 'current_tag'):
-                    para.current_tag = current_tag
+                    root = Element('itemDocuments')
+                    for idx_hl, hoc_lieu in enumerate(list_hl):
+                        item_doc = self.create_hoc_lieu_xml(hoc_lieu, idx_hl)
+                        root.append(item_doc)
                 else:
-                    para.current_tag = current_tag
-                group_of_questions[-1]['questions'].append(para)
+                    root = Element('questions')
+                    self.index_question = 0
+                    for group in group_of_questions:
+                        self.format_questions(group, root, errors)
+            except Exception as e:
+                errors.append(f"Lỗi khi tạo XML: {str(e)}")
+                return "", errors
 
-        # Tạo XML
-        if list_hl:
-            # Có học liệu
-            root = Element('itemDocuments')
-            for idx_hl, hoc_lieu in enumerate(list_hl):
-                item_doc = self.create_hoc_lieu_xml(hoc_lieu, idx_hl)
-                root.append(item_doc)
-        else:
-            # Chỉ có câu hỏi
-            root = Element('questions')
-            self.index_question = 0
-            for group in group_of_questions:
-                # Gọi format_questions với danh sách lỗi
-                self.format_questions(group, root, errors)
+            try:
+                xml_str = self.prettify_xml(root)
+                xml_str = self.post_process_xml(xml_str)
+            except Exception as e:
+                errors.append(f"Lỗi khi định dạng XML: {str(e)}")
+                return "", errors
 
-        # Convert sang string
-        xml_str = self.prettify_xml(root)
-        xml_str = self.post_process_xml(xml_str)
-        # Trả về cả XML và danh sách lỗi
-        return xml_str, errors
+            return xml_str, errors
+
+        except Exception as e:
+            # Lỗi nghiêm trọng: không thể mở file, không phải DOCX, v.v.
+            errors.append(f"Lỗi nghiêm trọng khi xử lý file '{file_path}': {str(e)}")
+            import traceback
+            traceback.print_exc()  # chỉ để debug, có thể bỏ trong production
+            return "", errors
 
 
     def create_hoc_lieu_xml(self, hoc_lieu, index_hl):
@@ -235,18 +273,27 @@ class DocxProcessor:
                         body_elem = getattr(container._body, "_element", None)
                     if body_elem is not None:
                         for child in body_elem.iterchildren():
-
+                            tag = child.tag    
                             if isinstance(child, CT_P):
 
+                                print(f">>>>>>>>>>> Phát hiện paragraph extract elements functions")
                                 para = Paragraph(child, container)
 
                                 elements.append(para)
 
                             elif isinstance(child, CT_Tbl):
 
+                                print(f">>>>>>>> Phát hiện table extract elements functions")
+
                                 tbl = DocxTable(child, container)
 
                                 elements.append(tbl)
+
+                            tag = child.tag
+                            if tag == qn('w:p'):
+                                elements.append(Paragraph(child, container))
+                            elif tag == qn('w:tbl'):  # ← CÁCH NÀY RẤT AN TOÀN VÀ CHÍNH XÁC
+                                elements.append(DocxTable(child, container))
 
                         print(f"[DEBUG] Trích xuất trực tiếp từ XML body: {len(elements)} phần tử")
                         return elements
@@ -261,91 +308,26 @@ class DocxProcessor:
             # fallback cuối cùng (cũ)
             try:
                 for child in container._element.iterchildren():
+
                     if isinstance(child, CT_P):
+
                         elements.append(Paragraph(child, container))
+
                     elif isinstance(child, CT_Tbl):
+                        print(f">>>>>>> Detected table")
+
                         elements.append(DocxTable(child, container))
+
             except Exception as e:
                 print(f"[WARN] fallback extract_elements lỗi: {e}")
+
                 traceback.print_exc()
+
             return elements
-        # =================== HELPER: CONVERT PARAGRAPH ===================
-        def convert_paragraph_to_html(p: Paragraph) -> str:
-            """Chuyển 1 Paragraph thành HTML, đồng thời loại bỏ prefix 'HL:' nếu có."""
-            html = ""
-            try:
-                runs = p.runs
-                print(f"[DEBUG] → Paragraph có {len(runs)} runs")
-                # ✅ Ghép toàn bộ text để dò prefix HL:
-                full_text = "".join(run.text or "" for run in runs)
-                import re
-                # ✅ Regex: dò cụm 'HL:' ở đầu dòng (chấp nhận cách viết linh hoạt)
-                hl_match = re.match(r"^\s*(H\s*L\s*[:：\-]\s*)", full_text, re.IGNORECASE)
-                hl_cut_pos = hl_match.end() if hl_match else 0
-                current_pos = 0
-                for i, run in enumerate(runs):
-                    text = run.text or ""
-                    # ✅ Nếu có HL:, bỏ đoạn tương ứng
-                    if hl_cut_pos:
-                        if current_pos + len(text) <= hl_cut_pos:
-                            current_pos += len(text)
-                            continue  # toàn bộ run nằm trong vùng HL:
-                        elif current_pos < hl_cut_pos:
-                            text = text[hl_cut_pos - current_pos:]  # cắt phần HL:
-                            current_pos = hl_cut_pos
-                        else:
-                            current_pos += len(text)
-                    else:
-                        current_pos += len(text)
-                    # 1️⃣ Xử lý ảnh trong run (nếu có)
-                    try:
-                        imgs = self._get_image_tags_from_run(run)
-                        if imgs:
-                            for it in imgs:
-                                html += it
-                    except Exception as e:
-                        print(f"[WARN] Lỗi khi lấy ảnh từ run {i}: {e}")
-                    # 2️⃣ Bỏ qua nếu text rỗng
-                    if not text.strip():
-                        continue
-                    # 3️⃣ Áp dụng format
-                    pieces = self.escape_html(text)
-                    if run.bold:
-                        pieces = f"<b>{pieces}</b>"
-                    if run.italic:
-                        pieces = f"<i>{pieces}</i>"
-                    if run.underline:
-                        pieces = f"<u>{pieces}</u>"
-                    if getattr(run.font, "subscript", False):
-                        pieces = f"<sub>{pieces}</sub>"
-                    if getattr(run.font, "superscript", False):
-                        pieces = f"<sup>{pieces}</sup>"
-                    html += pieces
-                # 4️⃣ Xử lý ảnh inline / ngoài runs
-                try:
-                    inline_imgs = p._element.xpath(".//a:blip/@r:embed")
+        
+        
 
-                    for rId in inline_imgs:
-
-                        tag = self._make_img_tag_from_rid(rId)
-
-                        if tag:
-                            html += tag
-
-                except Exception as e:
-
-                    print(f"[WARN] Lỗi khi xử lý ảnh inline: {e}")
-
-                html = self.normalize_line_breaks(html)
-
-                return f"<p>{html}</p>"
-                
-            
-            except Exception as e:
-
-                print(f"[ERROR] Lỗi convert_paragraph_to_html: {e}")
-
-                traceback.print_exc()
+        # =================== HELPER: CONVERT PARAGRAPH ==================
 
             # return f"<p>{html}</p>  "
         # =================== CHUẨN BỊ DANH SÁCH PHẦN TỬ ===================
@@ -361,18 +343,22 @@ class DocxProcessor:
         # =================== DUYỆT TOÀN BỘ PHẦN TỬ ===================
         html_parts = []
         for i, el in enumerate(all_elements):
+
             print(f"[DEBUG] --- Xử lý phần tử {i}: {type(el).__name__}")
             try:
                 if isinstance(el, Paragraph):
-                    html_parts.append(convert_paragraph_to_html(el))
-                elif isinstance(el, DocxTable):
-                    html_parts.append(self.convert_table_to_html(el))
+                    print(f">>>>>> convert paragraph  123132")
+                    html_parts.append(self.convert_paragraph_for_hl(el))
+                elif isinstance(el, CT_Tbl):
+                    print(f">>>>>>> phát hiện table")
+                    html_parts.append(self.convert_table_to_html(el, is_hoc_lieu=True))
                 else:
                     print(f"[WARN] Bỏ qua phần tử loại: {type(el)}")
             except Exception as e:
                 print(f"[ERROR] Lỗi xử lý phần tử {i}: {e}")
                 traceback.print_exc()
                 html_parts.append(f"<!-- ERROR tại phần tử {i} -->")
+        
         # =================== KẾT THÚC ===================
         html = "".join(html_parts)
         print("[DEBUG] === KẾT THÚC HÀM xu_ly_hl ===")
@@ -382,69 +368,202 @@ class DocxProcessor:
         """Chuyển mọi dạng xuống dòng (kể cả shift+enter) thành <br/>"""
         return text.replace('\r\n', '<br/>').replace('\n', '<br/>').replace('\r', '<br/>')
 
-    def convert_table_to_html(self, table: DocxTable) -> str:
+    # def convert_table_to_html(self, table: DocxTable, is_hoc_lieu=False) -> str:
+    #     """
+    #     Convert table sang HTML (hỗ trợ nested table).
+    #     NOTE: Bỏ colspan (theo yêu cầu).
+    #     """
+    #     print("[DEBUG][convert_table_to_html] === BẮT ĐẦU XỬ LÝ TABLE ===")
+    #     html = "<table class='table-material-question'>"
+    #     try:
+    #         # Dùng API python-docx chính thức: table.rows, cell.paragraphs, cell.tables
+    #         for r_idx, row in enumerate(table.rows):
+    #             html += "<tr>"
+    #             print(f"[DEBUG] → Row {r_idx}, số ô: {len(row.cells)}")
+    #             for c_idx, cell in enumerate(row.cells):
+    #                 print(f"[DEBUG]   → Cell ({r_idx},{c_idx}) bắt đầu xử lý")
+    #                 parts: List[str] = []
+    #                 # 1) Nếu cell có nested tables theo python-docx -> xử lý trước
+    #                 try:
+    #                     if hasattr(cell, "tables") and cell.tables:
+    #                         print(f"[DEBUG]   Nested tables count in cell ({r_idx},{c_idx}): {len(cell.tables)}")
+    #                         for nt_idx, nested in enumerate(cell.tables):
+    #                             try:
+    #                                 parts.append(self.convert_table_to_html(nested))
+    #                             except Exception as e:
+    #                                 print(f"[ERROR] Lỗi xử lý nested table ({r_idx},{c_idx},{nt_idx}): {e}")
+    #                                 traceback.print_exc()
+    #                                 parts.append("<!-- ERROR nested -->")
+    #                 except Exception as e:
+    #                     print(f"[WARN] Không thể đọc cell.tables tại ({r_idx},{c_idx}): {e}")
+    #                 # 2) Thêm các paragraph trong cell (theo thứ tự)
+    #                 try:
+    #                     if hasattr(cell, "paragraphs"):
+    #                         for p_idx, p in enumerate(cell.paragraphs):
+    #                             try:
+    #                                 # convert_paragraph_to_html đã tồn tại và trả về <p>..</p>
+    #                                 para_html = self.convert_content_to_html(p)
+    #                                 parts.append(para_html)
+    #                             except Exception as e:
+    #                                 print(f"[WARN] Lỗi convert paragraph trong cell ({r_idx},{c_idx},p{p_idx}): {e}")
+    #                                 traceback.print_exc()
+    #                                 # fallback: raw text
+    #                                 try:
+    #                                     parts.append(p.text)
+    #                                 except Exception:
+    #                                     parts.append("")
+    #                 except Exception as e:
+    #                     print(f"[WARN] Không thể đọc cell.paragraphs tại ({r_idx},{c_idx}): {e}")
+    #                 # 3) Join parts, trim; nếu rỗng -> dùng &nbsp;
+    #                 cell_html = "".join(parts).strip()
+    #                 if not cell_html:
+    #                     cell_html = "&nbsp;"
+    #                 # 4) **Không sinh colspan nữa** (user yêu cầu xóa colspan)
+    #                 html += f"<td>{cell_html}</td>"
+    #             html += "</tr>"
+    #     except Exception as e:
+    #         print(f"[ERROR] convert_table_to_html gặp lỗi tổng thể: {e}")
+    #         traceback.print_exc()
+    #     html += "</table><br>"
+    #     print("[DEBUG][convert_table_to_html] === KẾT THÚC ===")
+    #     return html
+
+
+    def convert_paragraph_for_hl(self, p: Paragraph) -> str:
+        self.detect_soft_breaks_in_paragraph(p)
+        """Xử lý paragraph trong học liệu (HL).
+        - CẮT BỎ phần 'HL: ...' nếu paragraph đó bắt đầu bằng 'HL:'.
+        - Giữ định dạng (bold/italic/...), ảnh, bảng.
+        - Thêm <br/> ở cuối để xuống dòng như logic cũ.
         """
-        Convert table sang HTML (hỗ trợ nested table).
-        NOTE: Bỏ colspan (theo yêu cầu).
-        """
+        try:
+            full_text = p.text
+            html = ""
+
+            # === 1. CẮT TIỀN TỐ 'HL:' NẾU CÓ ===
+            import re
+            hl_match = re.match(r"^\s*(H\s*L\s*[:：\-]\s*)", full_text, re.IGNORECASE)
+            hl_cut_pos = hl_match.end() if hl_match else 0
+
+            # === 2. XÂY DỰNG HTML CHO PHẦN CÒN LẠI ===
+            current_pos = 0
+            for run in p.runs:
+                run_text = run.text or ""
+                if not run_text:
+                    continue
+                run_start = current_pos
+                run_end = current_pos + len(run_text)
+                current_pos = run_end
+
+                if run_end <= hl_cut_pos:
+                    continue
+
+                if run_start < hl_cut_pos:
+                    offset = hl_cut_pos - run_start
+                    effective_text = run_text[offset:]
+                else:
+                    effective_text = run_text
+
+                if not effective_text:
+                    continue
+
+                seg = self.escape_html(effective_text)
+                if run.bold:
+                    seg = f"<b>{seg}</b>"
+                if run.italic:
+                    seg = f"<i>{seg}</i>"
+                if run.underline:
+                    seg = f"<u>{seg}</u>"
+                if getattr(run.font, 'superscript', False):
+                    seg = f"<sup>{seg}</sup>"
+                if getattr(run.font, 'subscript', False):
+                    seg = f"<sub>{seg}</sub>"
+                if getattr(run.font, 'strike', False) or getattr(run, 'strike', False):
+                    seg = f"<strike>{seg}</strike>"
+                html += seg
+
+            # === 3. XỬ LÝ ẢNH TRONG RUNS ===
+            for run in p.runs:
+                try:
+                    imgs = self._get_image_tags_from_run(run)
+                    if imgs:
+                        html += "".join(imgs)
+                except Exception as e:
+                    print(f"[WARN] Lỗi _get_image_tags_from_run trong run: {e}")
+
+            # === 4. XỬ LÝ ẢNH DRAWING TRỰC TIẾP TRONG PARAGRAPH ===
+            try:
+                drawings = p._element.findall('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}drawing')
+                for drawing in drawings:
+                    blip = drawing.find('.//{http://schemas.openxmlformats.org/drawingml/2006/main}blip')
+                    if blip is not None:
+                        rId = blip.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed')
+                        if rId:
+                            width_emu, height_emu = self.lay_kich_thuoc_tu_word_xml(drawing)
+                            img_tag = self._make_img_tag_from_rid(rId, width_emu, height_emu)
+                            if img_tag:
+                                html += img_tag
+            except Exception as e:
+                print(f"[ERROR] Lỗi xử lý drawing trực tiếp: {e}")
+                import traceback
+                traceback.print_exc()
+
+            # === 5. THÊM XUỐNG DÒNG NHƯ LOGIC CŨ ===
+            if html.strip():
+                html += "<br/>"
+
+            return html
+
+        except Exception as e:
+            print(f"[ERROR] convert_paragraph_for_hl: {e}")
+            import traceback
+            traceback.print_exc()
+            return ""
+
+    def convert_table_to_html(self, table: DocxTable, is_hoc_lieu=False) -> str:
         print("[DEBUG][convert_table_to_html] === BẮT ĐẦU XỬ LÝ TABLE ===")
         html = "<table class='table-material-question'>"
         try:
-            # Dùng API python-docx chính thức: table.rows, cell.paragraphs, cell.tables
             for r_idx, row in enumerate(table.rows):
                 html += "<tr>"
-                print(f"[DEBUG] → Row {r_idx}, số ô: {len(row.cells)}")
                 for c_idx, cell in enumerate(row.cells):
-                    print(f"[DEBUG]   → Cell ({r_idx},{c_idx}) bắt đầu xử lý")
-                    parts: List[str] = []
-                    # 1) Nếu cell có nested tables theo python-docx -> xử lý trước
-                    try:
-                        if hasattr(cell, "tables") and cell.tables:
-                            print(f"[DEBUG]   Nested tables count in cell ({r_idx},{c_idx}): {len(cell.tables)}")
-                            for nt_idx, nested in enumerate(cell.tables):
-                                try:
-                                    parts.append(self.convert_table_to_html(nested))
-                                except Exception as e:
-                                    print(f"[ERROR] Lỗi xử lý nested table ({r_idx},{c_idx},{nt_idx}): {e}")
-                                    traceback.print_exc()
-                                    parts.append("<!-- ERROR nested -->")
-                    except Exception as e:
-                        print(f"[WARN] Không thể đọc cell.tables tại ({r_idx},{c_idx}): {e}")
-                    # 2) Thêm các paragraph trong cell (theo thứ tự)
-                    try:
-                        if hasattr(cell, "paragraphs"):
-                            for p_idx, p in enumerate(cell.paragraphs):
-                                try:
-                                    # convert_paragraph_to_html đã tồn tại và trả về <p>..</p>
-                                    para_html = self.convert_content_to_html(p)
-                                    parts.append(para_html)
-                                except Exception as e:
-                                    print(f"[WARN] Lỗi convert paragraph trong cell ({r_idx},{c_idx},p{p_idx}): {e}")
-                                    traceback.print_exc()
-                                    # fallback: raw text
-                                    try:
-                                        parts.append(p.text)
-                                    except Exception:
-                                        parts.append("")
-                    except Exception as e:
-                        print(f"[WARN] Không thể đọc cell.paragraphs tại ({r_idx},{c_idx}): {e}")
-                    # 3) Join parts, trim; nếu rỗng -> dùng &nbsp;
+                    parts = []
+                    # Nested tables
+                    if hasattr(cell, "tables") and cell.tables:
+                        for nested in cell.tables:
+                            parts.append(self.convert_table_to_html(nested, is_hoc_lieu))
+                    # Paragraphs
+                    if hasattr(cell, "paragraphs"):
+                        for p in cell.paragraphs:
+                            # para_html = ""
+                            # if is_hoc_lieu:
+                            #     para_html = self.convert_paragraph_for_hl(p)
+                            # else:
+                            #     para_html = self.convert_content_to_html(p)
+                            # if para_html:
+                            #     # ✅ KHÔNG bọc para_html trong <p>...</p> trong table!
+                            #     parts.append(para_html)
+                            if is_hoc_lieu:
+                                para_html = self.convert_paragraph_for_hl(p)
+                                if para_html:
+                                    parts.append(para_html)  # ✅ KHÔNG bọc <p>...</p>
+                            else:
+                                para_html = self.convert_content_to_html(p)
+                                parts.append(para_html)
                     cell_html = "".join(parts).strip()
                     if not cell_html:
                         cell_html = "&nbsp;"
-                    # 4) **Không sinh colspan nữa** (user yêu cầu xóa colspan)
                     html += f"<td>{cell_html}</td>"
                 html += "</tr>"
         except Exception as e:
-            print(f"[ERROR] convert_table_to_html gặp lỗi tổng thể: {e}")
+            print(f"[ERROR] convert_table_to_html: {e}")
             traceback.print_exc()
         html += "</table><br>"
-        print("[DEBUG][convert_table_to_html] === KẾT THÚC ===")
         return html
 
     def wrap_style(self, text, style):
         """Đóng gói text với style tuple"""
-        bold, italic, underline, sup, sub = style
+        bold, italic, underline, sup, sub, strike = style
 
         if bold:
 
@@ -460,11 +579,15 @@ class DocxProcessor:
 
         if sup:
 
-            text = f"<sup>{text}</sup>"
+            text = f"<sup>{text}</sup>"    
 
         if sub:
 
             text = f"<sub>{text}</sub>"
+
+        if strike:
+
+            text = f"<strike>{text}</strike>"    
 
         return text
 
@@ -493,11 +616,17 @@ class DocxProcessor:
             each_question_xml = Element('question')
             # Metadata
             SubElement(each_question_xml, 'indexGroupQuestionMaterial').text = str(self.index_question)
+
             SubElement(each_question_xml, 'subject').text = group['subject']
+
             question_tag = question_dict['question_tag']
+
             SubElement(each_question_xml, 'tag').text = question_tag
+
             SubElement(each_question_xml, 'posttype').text = group['posttype']
+
             SubElement(each_question_xml, 'knowledgelevel').text = group['knowledgelevel']
+
             SubElement(each_question_xml, 'levelquestion').text = str(group['level'])
             # Xử lý nội dung câu hỏi
             try:
@@ -515,127 +644,16 @@ class DocxProcessor:
             self.index_question += 1
             questions_xml.append(each_question_xml)
 
-
-    # def _get_image_tags_from_run(self, run):
-    #         """
-    #         Tìm image references trong run._r (blip / v:imagedata),
-    #         trả về list tag <img src="data:..."/> (base64).
-    #         """
-    #         imgs = []
-    #         try:
-    #             # truy cập vào phần XML thô của run
-    #             r = run._r
-    #             # 1) DrawingML blip (thường thấy với images chèn hiện đại)
-    #             blips = r.xpath('.//a:blip', namespaces={'a': 'http://schemas.openxmlformats.org/drawingml/2006/main'})
-
-    #             for blip in blips:
-
-    #                 # attribute chứa relationship id
-    #                 rId = blip.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed')
-
-    #                 if rId:
-
-    #                     img_tag = self._make_img_tag_from_rid(rId)
-
-    #                     if img_tag:
-
-    #                         imgs.append(img_tag)
-    #             # 2) VML (cũ hơn) - v:imagedata với attribute r:id
-    #             picts = r.xpath('.//v:imagedata', namespaces={'v': 'urn:schemas-microsoft-com:vml'})
-
-    #             for pict in picts:
-
-    #                 rId = pict.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id')
-
-    #                 if rId:
-
-    #                     img_tag = self._make_img_tag_from_rid(rId)
-
-    #                     if img_tag:
-
-    #                         imgs.append(img_tag)
-    #         except Exception:
-    #             # im lặng nếu không tìm thấy hoặc lỗi, tránh crash
-    #             pass
-    #         return imgs
-
- 
-    # def _make_img_tag_from_rid(self, rId):
-    #     """
-    #     Dùng rId để lấy image part từ self.doc.part.related_parts,
-    #     trả về một thẻ <img src="data:..."> hoặc None.
-    #     """
-    #     try:
-    #         part = self.doc.part.related_parts.get(rId)
-
-    #         if not part:
-    #             # fallback: tìm trong các rels
-    #             for rel in self.doc.part.rels.values():
-    #                 try:
-    #                     target = getattr(rel, 'target_part', None)
-    #                     if target and 'image' in getattr(target, 'content_type', ''):
-    #                         if rel.rId == rId:
-    #                             part = target
-    #                             break
-    #                 except Exception:
-    #                     continue
-
-    #         if not part:
-    #             print(f"[DEBUG] Không tìm thấy part cho rId={rId}")
-    #             return None
-
-    #         img_bytes = part.blob
-    #         content_type = getattr(part, 'content_type', 'image/png')
-
-    #         # --- ĐỌC KÍCH THƯỚC GỐC & RESIZE NẾU CẦN ---
-    #         img = Image.open(BytesIO(img_bytes))
-    #         original_width, original_height = img.size
-    #         print(f"[DEBUG] Ảnh rId={rId} kích thước gốc: {original_width}x{original_height}")
-
-    #         max_width = 350
-    #         max_height = 350
-    #         ratio = min(max_width / original_width, max_height / original_height)
-
-    #         if ratio < 1:
-    #             new_width = int(original_width * ratio)
-    #             new_height = int(original_height * ratio)
-    #             print(f"[DEBUG] Ảnh rId={rId} sau khi resize: {new_width}x{new_height}")
-    #             img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-    #         else:
-    #             new_width, new_height = original_width, original_height
-
-    #         # --- LƯU ẢNH SAU RESIZE VÀO BYTES (KHÔNG NÉN, GIỮ NGUYÊN FORMAT) ---
-    #         output = BytesIO()
-    #         img_format = img.format or 'PNG'
-    #         img.save(output, format=img_format, optimize=False)
-    #         resized_img_bytes = output.getvalue()
-    #         output.close()
-
-    #         # --- ENCODE BASE64 ---
-    #         b64 = base64.b64encode(resized_img_bytes).decode('ascii')
-
-    #         # --- SINH TAG HTML ---
-    #         style = f'style="width:{new_width}px; height:{new_height}px;"'
-    #         return f'<center><img src="data:{content_type};base64,{b64}" {style} /></center>'
-
-    #     except Exception as e:
-    #         print(f"[ERROR] _make_img_tag_from_rid lỗi: {e}")
-    #         import traceback
-    #         traceback.print_exc()
-    #         return None    
    
 
     def _get_image_tags_from_run(self, run):
         """
-        Tìm image references trong run._r (blip / v:imagedata),
-        trả về list tag <img src="data:..."/> (base64).
-        Kích thước theo đơn vị POINTS để khớp với GAS.
+        Trích xuất ảnh từ run, tính KÍCH THƯỚC HIỂN THỊ theo chuẩn Google Docs (pixel GAS).
+        Không dùng Pillow.size để xác định kích thước hiển thị.
         """
         imgs = []
         try:
             r = run._r
-            
-            # Đăng ký namespaces
             from lxml import etree
             nsmap = {
                 'a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
@@ -643,57 +661,60 @@ class DocxProcessor:
                 'r': 'http://schemas.openxmlformats.org/officeDocument/2006/relationships',
                 'v': 'urn:schemas-microsoft-com:vml'
             }
-            
-            # 1) DrawingML blip (thường thấy với images chèn hiện đại)
-            # Tìm extent để lấy kích thước display
-            extents = r.findall('.//wp:extent', nsmap)
+
+            # --- 1. DrawingML: blip + extent ---
             blips = r.findall('.//a:blip', nsmap)
+            extents = r.findall('.//wp:extent', nsmap)
 
             for idx, blip in enumerate(blips):
                 rId = blip.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed')
-                
-                if rId:
-                    # Lấy kích thước display từ extent (nếu có)
-                    display_width, display_height = None, None
-                    if idx < len(extents):
-                        extent = extents[idx]
-                        # EMU (English Metric Units): 914400 EMU = 1 inch, 1 inch = 72 points
-                        cx = extent.get('cx')  # width in EMU
-                        cy = extent.get('cy')  # height in EMU
-                        if cx and cy:
-                            # Chuyển từ EMU sang POINTS (914400 EMU = 1 inch = 72 pt)
-                            display_width = int(int(cx) / 914400 * 72)
-                            display_height = int(int(cy) / 914400 * 72)
-                    
-                    img_tag = self._make_img_tag_from_rid(rId, display_width, display_height)
-                    if img_tag:
-                        imgs.append(img_tag)
-            
-            # 2) VML (cũ hơn) - v:imagedata với attribute r:id
-            picts = r.findall('.//v:imagedata', nsmap)
+                if not rId:
+                    continue
 
+                display_width_px, display_height_px = None, None
+
+                # Dùng extent để tính KÍCH THƯỚC HIỂN THỊ (pixel trong Google Docs)
+                if idx < len(extents):
+                    extent = extents[idx]
+                    cx = extent.get('cx')  # EMU
+                    cy = extent.get('cy')  # EMU
+                    if cx and cy:
+                        # Google Docs dùng DPI ≈ 220 cho hiển thị
+                        # 1 inch = 220 pixel (GAS), 1 inch = 914400 EMU
+                        # → 1 EMU = 220 / 914400 pixel
+                        display_width_px = int(int(cx) * 220 / 914400)
+                        display_height_px = int(int(cy) * 220 / 914400)
+
+                img_tag = self._make_img_tag_from_rid(rId, display_width_px, display_height_px)
+                if img_tag:
+                    imgs.append(img_tag)
+
+            # --- 2. VML (hiếm, nhưng xử lý nếu có) ---
+            picts = r.findall('.//v:imagedata', nsmap)
             for pict in picts:
                 rId = pict.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id')
-                
-                if rId:
-                    # VML thường có style="width:XXpt;height:YYpt" ở parent shape
-                    display_width, display_height = None, None
-                    shape = pict.getparent()
-                    if shape is not None:
-                        style = shape.get('style', '')
-                        # Parse style để lấy width/height (đã ở dạng points)
-                        import re
-                        width_match = re.search(r'width:\s*(\d+(?:\.\d+)?)pt', style)
-                        height_match = re.search(r'height:\s*(\d+(?:\.\d+)?)pt', style)
-                        if width_match and height_match:
-                            # Giữ nguyên đơn vị points
-                            display_width = int(float(width_match.group(1)))
-                            display_height = int(float(height_match.group(1)))
-                    
-                    img_tag = self._make_img_tag_from_rid(rId, display_width, display_height)
-                    if img_tag:
-                        imgs.append(img_tag)
-                        
+                if not rId:
+                    continue
+
+                display_width_px, display_height_px = None, None
+                shape = pict.getparent()
+                if shape is not None:
+                    style = shape.get('style', '')
+                    import re
+                    width_match = re.search(r'width:\s*(\d+(?:\.\d+)?)pt', style)
+                    height_match = re.search(r'height:\s*(\d+(?:\.\d+)?)pt', style)
+                    if width_match and height_match:
+                        # Chuyển pt → inch → pixel (220 DPI)
+                        width_pt = float(width_match.group(1))
+                        height_pt = float(height_match.group(1))
+                        # 1 pt = 1/72 inch → pixel = (pt / 72) * 220
+                        display_width_px = int(width_pt * 220 / 72)
+                        display_height_px = int(height_pt * 220 / 72)
+
+                img_tag = self._make_img_tag_from_rid(rId, display_width_px, display_height_px)
+                if img_tag:
+                    imgs.append(img_tag)
+
         except Exception as e:
             print(f"[ERROR] _get_image_tags_from_run: {e}")
             import traceback
@@ -701,21 +722,73 @@ class DocxProcessor:
         return imgs
 
 
-    def _make_img_tag_from_rid(self, rId, display_width=None, display_height=None):
+    def lay_kich_thuoc_tu_word_xml(self,drawing_element):
         """
-        Dùng rId để lấy image part, sử dụng display_width/height (POINTS) nếu có,
-        nếu không thì dùng kích thước gốc với max constraint (POINTS).
+        Lấy cx, cy (EMU units) từ Word XML.
+        
+        Ví dụ XML:
+        <wp:extent cx="2006920" cy="1828800"/>
+        
+        Returns:
+            (width_emu, height_emu) hoặc (None, None)
+        """
+        try:
+            # Namespace của Word XML
+            namespaces = {
+                'wp': 'http://schemas.openxmlformats.org/drawingml/2006/wordprocessingDrawing',
+                'a': 'http://schemas.openxmlformats.org/drawingml/2006/main',
+                'pic': 'http://schemas.openxmlformats.org/drawingml/2006/picture'
+            }
+            
+            # Tìm extent element
+            extent = drawing_element.find('.//wp:extent', namespaces)
+            
+            if extent is not None:
+                cx_emu = int(extent.get('cx', 0))  # width in EMU
+                cy_emu = int(extent.get('cy', 0))  # height in EMU
+                
+                print(f"[DEBUG] ✓ Tìm thấy extent: cx={cx_emu} EMU, cy={cy_emu} EMU")
+                return cx_emu, cy_emu
+            else:
+                print(f"[DEBUG] ✗ Không tìm thấy wp:extent trong drawing")
+                return None, None
+                
+        except Exception as e:
+            print(f"[ERROR] lay_kich_thuoc_tu_word_xml: {e}")
+            import traceback
+            traceback.print_exc()
+            return None, None
+
+    def _make_img_tag_from_rid(self, rId, display_width_emu=None, display_height_emu=None):
+        print(f">>>>>>>> chiều rộng emu {display_width_emu}")
+
+        print(f">>>>>>>>> chiều dài emu {display_height_emu}")
+        """
+        Tạo thẻ <img> với kích thước CHÍNH XÁC từ Word XML.
+        
+        QUAN TRỌNG:
+        - Phải truyền display_width_emu và display_height_emu từ Word XML
+        - ĐỪNG dùng img.size (pixel vật lý của ảnh gốc)
+        - Google Apps Script dùng EMU units từ Word XML
+        
+        Công thức:
+        - Word lưu: cx, cy (EMU units)
+        - GAS getWidth() = cx / 12700 (point)
+        - HTML style: width = (cx / 12700)px
         """
         try:
             part = self.doc.part.related_parts.get(rId)
-
             if not part:
                 for rel in self.doc.part.rels.values():
                     try:
                         target = getattr(rel, 'target_part', None)
+
                         if target and 'image' in getattr(target, 'content_type', ''):
+
                             if rel.rId == rId:
+
                                 part = target
+
                                 break
                     except Exception:
                         continue
@@ -725,65 +798,62 @@ class DocxProcessor:
                 return None
 
             img_bytes = part.blob
+
             content_type = getattr(part, 'content_type', 'image/png')
+            
+            # === TÍNH KÍCH THƯỚC TỪ WORD XML EMU ===
+            if display_width_emu is not None and display_height_emu is not None:
+                # Chuyển EMU → point (khớp với GAS)
+                # 1 point = 12700 EMU
+                final_width = round(display_width_emu / 9525)
 
-            # Đọc ảnh
-            img = Image.open(BytesIO(img_bytes))
-            original_width_px, original_height_px = img.size
-            print(f"[DEBUG] Ảnh rId={rId} kích thước gốc: {original_width_px}x{original_height_px} pixels")
 
-            # Nếu có display size từ Word (đơn vị POINTS), dùng nó
-            if display_width and display_height:
-                width_pt = display_width
-                height_pt = display_height
-                print(f"[DEBUG] Dùng kích thước từ Word XML: {width_pt}x{height_pt} points")
+                final_height = round(display_height_emu / 9525)
+
+                print(f"[DEBUG] Word XML: {display_width_emu}x{display_height_emu} EMU")
+
+                print(f"[DEBUG] GAS output: {final_width}x{final_height} pt")
             else:
-                # Fallback: chuyển pixel gốc sang points (giả sử 96 DPI)
-                # 1 inch = 72 points = 96 pixels => 1 pixel = 0.75 points
-                original_width_pt = original_width_px * 0.75
-                original_height_pt = original_height_px * 0.75
+                # FALLBACK: Dùng kích thước ảnh gốc (KHÔNG KHUYẾN NGHỊ)
+                img = Image.open(BytesIO(img_bytes))
+
+                pixel_width, pixel_height = img.size
+
+                dpi_info = img.info.get('dpi', (96, 96))
+
+                dpi = dpi_info[0] if isinstance(dpi_info, tuple) else dpi_info
                 
-                # Áp dụng max constraint (trong points)
-                max_width_pt = 350 * 0.75  # ~262.5 pt
-                max_height_pt = 350 * 0.75  # ~262.5 pt
-                ratio = min(max_width_pt / original_width_pt, max_height_pt / original_height_pt)
-                
-                if ratio < 1:
-                    width_pt = int(original_width_pt * ratio)
-                    height_pt = int(original_height_pt * ratio)
-                else:
-                    width_pt = int(original_width_pt)
-                    height_pt = int(original_height_pt)
-                print(f"[DEBUG] Dùng max constraint: {width_pt}x{height_pt} points")
+                final_width = round(pixel_width * 72 / dpi)
 
-            # Chuyển points sang pixels để resize ảnh (1 point = 96/72 pixels = 1.333...)
-            new_width_px = int(width_pt * 96 / 72)
-            new_height_px = int(height_pt * 96 / 72)
+                final_height = round(pixel_height * 72 / dpi)
 
-            # Resize ảnh
-            if (new_width_px, new_height_px) != (original_width_px, original_height_px):
-                img = img.resize((new_width_px, new_height_px), Image.Resampling.LANCZOS)
+                print(f"[WARNING] Không có EMU từ Word XML, dùng fallback!")
 
-            # Lưu ảnh
+                print(f"[DEBUG] Ảnh gốc: {pixel_width}x{pixel_height} px @ {dpi} DPI")
+
+                print(f"[DEBUG] Fallback: {final_width}x{final_height} pt")
+
+            # KHÔNG RESIZE - giữ nguyên ảnh gốc
             output = BytesIO()
+
+            img = Image.open(BytesIO(img_bytes))
+
             img_format = img.format or 'PNG'
+
             img.save(output, format=img_format, optimize=False)
-            resized_img_bytes = output.getvalue()
+
+            b64 = base64.b64encode(output.getvalue()).decode('ascii')
+
             output.close()
 
-            # Encode base64
-            b64 = base64.b64encode(resized_img_bytes).decode('ascii')
-
-            # Sinh tag HTML với kích thước POINTS (giống GAS)
-            # Lưu ý: CSS hỗ trợ đơn vị pt trực tiếp
-            style = f'style="width:{width_pt}px; height:{height_pt}px;"'
-            return f'<center><img {style} src="data:{content_type};base64,{b64}" /></center>'
+            return f'<center><img style="width:{final_width}px; height:{final_height}px;" src="data:{content_type};base64,{b64}" /></center>'
 
         except Exception as e:
-            print(f"[ERROR] _make_img_tag_from_rid lỗi: {e}")
+            print(f"[ERROR] _make_img_tag_from_rid: {e}")
             import traceback
             traceback.print_exc()
             return None
+        
     def protocol_of_q(self, question, each_question_xml, subject, errors, question_index):
         """Phân tích cấu trúc câu hỏi, nhận danh sách errors và số thứ tự câu hỏi question_index"""
         # Chia thành phần: nội dung câu hỏi và lời giải
@@ -1123,6 +1193,23 @@ class DocxProcessor:
     # ... (các hàm convert_content_to_html, dang_tn, list_answers_tn, strip_html, hdg_tn, dang_ds, dang_dt, dang_tl, convert_b4_add, convert_normal_paras, escape_html, prettify_xml) ...
     # Các hàm này không cần thay đổi để phù hợp với cơ chế mới, trừ khi chúng có thể ném lỗi và cần được xử lý riêng.
     # Tuy nhiên, để an toàn, ta có thể bao bọc các hàm chính được gọi từ format_questions trong try-except.
+
+
+    def detect_soft_breaks_in_paragraph(self, p: Paragraph):
+        """In ra vị trí và số lượng các soft break (Shift+Enter) trong paragraph để debug"""
+        from docx.oxml.ns import qn
+        br_nodes = p._element.findall(qn('w:br'))
+        soft_breaks = [br for br in br_nodes if br.get(qn('w:type')) == 'textWrapping']
+        if soft_breaks:
+            print(f"[DEBUG] Phát hiện {len(soft_breaks)} soft break (Shift+Enter) trong paragraph: '{p.text[:300]}...'")
+            for i, br in enumerate(soft_breaks):
+                # In vị trí tương đối (không chính xác tuyệt đối, nhưng đủ để nhận biết)
+                parent = br.getparent()
+                if parent is not None:
+                    idx = list(parent).index(br)
+                    print(f"  → Soft break #{i+1} tại vị trí XML index: {idx}")
+        else:
+            print(f"[DEBUG] Không có soft break trong paragraph: '{p.text[:50]}...'")
 
     def convert_content_to_html(self, paragraphs):
         """
@@ -1471,7 +1558,6 @@ class DocxProcessor:
             hdg_html = ''
         SubElement(xml, 'explainquestion').text = hdg_html
 
-    
     def dang_dt(self, cau_sau_xu_ly, xml, subject):
         from xml.etree.ElementTree import SubElement
         import re
@@ -1484,15 +1570,14 @@ class DocxProcessor:
 
         # ===== HINT =====
         if len(cau_sau_xu_ly) > 1 and isinstance(cau_sau_xu_ly[1], list) and len(cau_sau_xu_ly[1]) > 1:
-            hint_html = self.convert_b4_add(cau_sau_xu_ly[1][1])
+            hint_html = self.convert_b4_add_dt(cau_sau_xu_ly[1][1])
             SubElement(xml, 'hintQuestion').text = hint_html
 
         # ===== RAW HTML =====
-        raw_html = self.convert_b4_add(cau_sau_xu_ly[0])
+        raw_html = self.convert_b4_add_dt(cau_sau_xu_ly[0])  # <-- PHẢI KHÔNG CÓ <p>!
 
-        raw_html = re.sub(r'<br\s*/?>', '<br/>', raw_html)
-
-        lines = [ln.strip() for ln in raw_html.split('<br/>') if ln.strip()]
+        # GAS không có <p>, chỉ có <br> giữa các đoạn
+        lines = [ln for ln in raw_html.split('<br>') if True]  # giữ cả dòng rỗng để xử lý logic GAS
 
         if not lines:
             lines = ['']
@@ -1500,62 +1585,55 @@ class DocxProcessor:
         # ===== TITLE =====
         current_title_txt = lines[0]
 
-        title_plain = BeautifulSoup(
-            re.sub(r'^C[âa]u\s*\d+[\.:]\s*', '', current_title_txt, flags=re.IGNORECASE).strip(),
-            'html.parser'
-        ).get_text().strip()
+        # ✅ Giữ nguyên HTML của dòng title (GAS không strip HTML khi xét title)
+        # Chỉ kiểm tra plain text để quyết định có dùng title gốc không
+        title_plain = BeautifulSoup(current_title_txt, 'html.parser').get_text().strip()
 
         final_title = ''
-        if title_plain:
-            final_title = re.sub(r'^C[âa]u\s*\d+[\.:]\s*', '', current_title_txt, flags=re.IGNORECASE).strip()
+        if len(title_plain) > 1:
+            final_title = current_title_txt
         else:
+            # Trích xuất toàn bộ đáp án để xác định title mặc định
             found_answers = re.findall(r'\[\[(.*?)\]\]', raw_html)
             all_ans = ''.join(found_answers)
             if subject in getattr(self, 'subjects_with_default_titles', set()):
                 if any(c.isalpha() for c in all_ans):
                     final_title = 'Điền đáp án thích hợp vào ô trống'
                 else:
-                    final_title = 'Điền đáp án thích hợp vào ô trống (chỉ sử dụng chữ số, dấu ",", và dấu "-")'
+                    final_title = 'Điền đáp án thích hợp vào ô trống (chỉ sử dụng chữ số, dấu "," và dấu "-")'
 
-        # ===== XÁC ĐỊNH PHẦN NỘI DUNG CHÍNH VÀ PHẦN ĐÁP ÁN =====
-        # Tìm vị trí dòng đầu tiên chứa [[...]]
-        answer_start_idx = None
+        # ===== XỬ LÝ NỘI DUNG VÀ ĐÁP ÁN theo logic GAS =====
+        content_lines = []
+        answer_lines = []
+        check_one_content = False  # flag như GAS
 
-        for i, line in enumerate(lines):
+        # Duyệt từ dòng thứ 1 trở đi (sau title)
+        for line in lines[1:]:
+            is_input = bool(re.search(r'\[\[.*?\]\]', line))
+            is_not_empty = len(line.strip()) > 1
 
-            if '[[' in line and ']]' in line:
+            if not is_input and is_not_empty and not check_one_content:
+                content_lines.append(line)
+            else:
+                check_one_content = True
+                answer_lines.append(line)
 
-                answer_start_idx = i
+        # Ghép lại
+        content_html = '<br>'.join(content_lines)
+        answer_html_raw = '<br>'.join(answer_lines)
 
-                break
-
-        if answer_start_idx is None:
-            # Không có đáp án? => Toàn bộ sau tiêu đề là nội dung
-            content_lines = lines[1:]
-
-            answer_lines = []
-        else:
-            content_lines = lines[1:answer_start_idx]  # Nội dung thuần túy
-
-            answer_lines = lines[answer_start_idx:]    # Dòng chứa "[[...]]" trở đi
-
-        # Ghép lại nội dung và đáp án
-        content_html = '<br/>'.join(content_lines).strip()
-
-        answer_html_raw = '<br/>'.join(answer_lines).strip()
-
-        # ===== XỬ LÝ ĐÁP ÁN: thay [[...]] bằng input + giữ nguyên văn bản xung quanh =====
+        # ===== XỬ LÝ ĐÁP ÁN =====
         input_index = 0
+        dap_an_dt = []
 
         def repl(match):
-
             nonlocal input_index
-
+            answer_text = match.group(1).strip()
+            dap_an_dt.append(answer_text)
             input_index += 1
-
             return (f'<span class="ans-span-second"></span>'
                     f'<input class="can-resize-second" type="text" id="mathplay-answer-{input_index}">')
-        
+
         answer_html_processed = re.sub(r'\[\[(.*?)\]\]', repl, answer_html_raw)
 
         # ===== BUILD XML =====
@@ -1564,67 +1642,48 @@ class DocxProcessor:
         # --- title ---
         if final_title:
             title_div = SubElement(cq, 'div')
-
             title_div.set('class', 'title')
-
             title_div.text = final_title
 
-        # --- content (không chứa "Đáp án:", không chứa input) ---
+        # --- content ---
         content_div = SubElement(cq, 'div')
-
         content_div.set('class', 'content')
-
         content_div.text = content_html
 
-        # --- answer-input (chỉ chứa phần sau "Đáp án: ...") ---
-        if answer_html_processed:
+        # --- answer-input ---
+        if answer_html_processed.strip():
             ans_block = SubElement(cq, 'div')
-
             ans_block.set('class', 'answer-input')
-
-            line_block = SubElement(ans_block, 'div')
-
-            line_block.set('class', 'line')
-
-            line_block.text = answer_html_processed
+            # GAS: mỗi dòng trong answer_html_processed → một <div class="line">
+            for line in answer_html_processed.split('<br>'):
+                if line.strip():
+                    line_block = SubElement(ans_block, 'div')
+                    line_block.set('class', 'line')
+                    line_block.text = line
 
         # ===== LIST ANSWERS =====
-        found_answers = re.findall(r'\[\[(.*?)\]\]', raw_html)
-
-        dap_an_dt = [a.strip() for a in found_answers if a.strip()]
-
         listanswers = SubElement(xml, 'listanswers')
-
         for i, ans in enumerate(dap_an_dt):
-
             ans_clean = ans.replace('‘', "'").replace('’', "'").replace('|', '[-]')
-
             ans_tag = SubElement(listanswers, 'answer')
-
             SubElement(ans_tag, 'index').text = str(i)
-
             SubElement(ans_tag, 'content').text = ans_clean
-
             SubElement(ans_tag, 'isanswer').text = 'TRUE'
 
         # ===== EXPLAIN =====
+        hdg_html = ''
         if len(cau_sau_xu_ly) > 1 and isinstance(cau_sau_xu_ly[1], list) and cau_sau_xu_ly[1]:
-            hdg_html = self.convert_b4_add(cau_sau_xu_ly[1][0])
-
-            hdg_html = re.sub(r'#+', '', hdg_html)
-
+            hdg_html = self.convert_b4_add_dt(cau_sau_xu_ly[1][0])
+            
             hdg_plain = BeautifulSoup(hdg_html, 'html.parser').get_text().strip()
-
-            exp = SubElement(xml, 'explainquestion')
-            if len(hdg_plain) > 4:
-
-                exp.text = hdg_html
-            else:
-                exp.text = f"Đáp án đúng theo thứ tự là: {', '.join(dap_an_dt)}"
         else:
-            exp = SubElement(xml, 'explainquestion')
-            exp.text = f"Đáp án đúng theo thứ tự là: {', '.join(dap_an_dt)}"
+            hdg_plain = ''
 
+        exp = SubElement(xml, 'explainquestion')
+        if len(hdg_plain) > 4:
+            exp.text = hdg_html
+        else:
+            exp.text = f"Đáp án đúng theo thứ tự là: {', '.join(dap_an_dt)}"
 
 
     def dang_tl(self, cau_sau_xu_ly, xml, audio):
@@ -1659,6 +1718,33 @@ class DocxProcessor:
             hdg_html = self.convert_content_to_html(cau_sau_xu_ly[1]) if len(cau_sau_xu_ly) > 1 else ''
 
             SubElement(xml, 'explainquestion').text = hdg_html
+
+    def convert_b4_add_dt(self, paragraphs):
+        """Trả về HTML giống GAS: không có <p>, chỉ nối bằng <br>"""
+        new_children_all = []
+        for index, paragraph in enumerate(paragraphs):
+            new_children = []
+            if isinstance(paragraph, Table):
+                html_table = self.convert_table_to_html(paragraph)
+                new_children.append(html_table)
+            else:
+                self.convert_normal_paras(paragraph, index, new_children)
+            new_content = "".join(new_children)
+            new_children_all.append(new_content)
+
+        # GAS: chỉ thêm <br> nếu có nhiều đoạn
+        if len(new_children_all) > 1:
+            string_content = '<br>'.join(new_children_all)
+            
+        else:
+            string_content = new_children_all[0] if new_children_all else ''
+
+        # Xử lý math-latex
+        import re
+        math_latex = re.compile(r"\$[^$]*\$")
+        string_content = math_latex.sub(lambda m: f' <span class="math-tex">{m.group()}</span>', string_content)
+
+        return string_content        
 
     def convert_b4_add(self, paragraphs):
         """Xử lý danh sách paragraph thành HTML (giống GAS ConvertB4Add)"""
@@ -1727,16 +1813,27 @@ class DocxProcessor:
         buffer = ""
         current_text_pos = 0
         for run in paragraph.runs:
+
             full_text = run.text or ""
+
             text_start = current_text_pos
+
             text_end = current_text_pos + len(full_text)
+
             if text_end <= content_start_pos:
+
                 current_text_pos = text_end
+
+
                 continue
             if text_start < content_start_pos:
+
                 slice_start = content_start_pos - text_start
+
                 segment_text = full_text[slice_start:]
+
             else:
+
                 segment_text = full_text
             style = (
                 bool(run.bold),
@@ -1744,6 +1841,7 @@ class DocxProcessor:
                 bool(run.underline),
                 bool(getattr(run.font, 'superscript', False)),
                 bool(getattr(run.font, 'subscript', False)),
+                bool(getattr(run.font, 'strike', False))
             )
             if prev_style is not None and style != prev_style:
                 html_content += self.wrap_style(self.escape_html(buffer), prev_style)
@@ -1754,23 +1852,58 @@ class DocxProcessor:
         if buffer:
             html_content += self.wrap_style(self.escape_html(buffer), prev_style)
         # ✅ Giữ logic thêm ảnh cũ
+        # for run in paragraph.runs:
+        #     blips = run._element.xpath(
+        #         './/*[local-name()="blip" and namespace-uri()="http://schemas.openxmlformats.org/drawingml/2006/main"]'
+        #     )
+        #     if blips:
+        #         try:
+        #             rId_nodes = run._element.xpath(
+        #                 './/*[local-name()="blip"]/@*[local-name()="embed"]'
+        #             )
+        #             if rId_nodes:
+        #                 rId = rId_nodes[0]
+        #                 img_tag = self._make_img_tag_from_rid(rId)
+        #                 if img_tag:
+        #                     html_content += img_tag
+        #         except Exception:
+        #             pass
+
         for run in paragraph.runs:
-            blips = run._element.xpath(
-                './/*[local-name()="blip" and namespace-uri()="http://schemas.openxmlformats.org/drawingml/2006/main"]'
+            # Tìm tất cả drawing elements trong run
+            drawings = run._element.findall(
+                './/{http://schemas.openxmlformats.org/wordprocessingml/2006/main}drawing'
             )
-            if blips:
+            
+            for drawing in drawings:
                 try:
-                    rId_nodes = run._element.xpath(
-                        './/*[local-name()="blip"]/@*[local-name()="embed"]'
+                    # 1. Lấy rId từ blip
+                    blip = drawing.find(
+                        './/{http://schemas.openxmlformats.org/drawingml/2006/main}blip'
                     )
-                    if rId_nodes:
-                        rId = rId_nodes[0]
-                        img_tag = self._make_img_tag_from_rid(rId)
-                        if img_tag:
-                            html_content += img_tag
-                except Exception:
-                    pass
-        html_content = self.normalize_line_breaks(html_content)        
+                    
+                    if blip is not None:
+                        # Lấy r:embed attribute
+                        rId = blip.get(
+                            '{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed'
+                        )
+                        
+                        if rId:
+                            # 2. Lấy kích thước từ Word XML (EMU units)
+                            width_emu, height_emu = self.lay_kich_thuoc_tu_word_xml(drawing)
+                            
+                            # 3. Tạo HTML img tag với kích thước chính xác
+                            img_tag = self._make_img_tag_from_rid(rId, width_emu, height_emu)
+                            
+                            if img_tag:
+                                html_content += img_tag
+                                
+                except Exception as e:
+                    print(f"[ERROR] Xử lý ảnh trong run: {e}")
+                    import traceback
+                    traceback.print_exc()
+        # html_content = self.normalize_line_breaks(html_content)   
+        html_content = html_content.replace('####', '')     
         new_children.append(html_content.strip())
 
     def escape_html(self, text):

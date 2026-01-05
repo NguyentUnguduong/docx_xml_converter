@@ -1,38 +1,26 @@
 
 # docx_processor.py
-from copy import deepcopy
+
 import re
 import base64
 from io import BytesIO
 from docx import Document
 from docx.oxml.text.paragraph import CT_P
 from docx.oxml.table import CT_Tbl
-from docx.oxml import parse_xml
 from docx.oxml.ns import qn
 from docx.table import Table as DocxTable, _Cell
 from docx.table import Table 
 from docx.text.paragraph import Paragraph
-from docx.text.paragraph import Paragraph as DocxParagraph
 from xml.etree.ElementTree import Element, SubElement, tostring
 from xml.dom import minidom
 # from tinhoc_processor import TinHocProcessor # Bỏ import nếu chưa có
-from typing import List, Union, Any, Iterable, Optional
+from typing import List, Union, Any, Optional
 import traceback
 from PIL import Image
 from io import BytesIO
 from bs4 import BeautifulSoup
 
 
-# Giả sử TinHocProcessor chưa được định nghĩa, ta tạo một lớp giả lập
-# hoặc đảm bảo nó có thể được import. Nếu không, bỏ qua phần xử lý Tin học.
-# class TinHocProcessor:
-#     def __init__(self): pass
-#     def dang_ds_tinhoc(self, cau_sau_xu_ly, xml, audio, doc): pass
-#     def dang_tn_tinhoc(self, cau_sau_xu_ly, xml, audio, doc): pass
-#     def dang_dt(self, cau_sau_xu_ly, xml, subject): pass
-#     def dang_tl(self, cau_sau_xu_ly, xml, audio): pass
-
-# Thử import, nếu không có thì tạo lớp giả lập
 try:
     from tinhoc_processor import TinHocProcessor
 except ImportError:
@@ -50,7 +38,7 @@ class DocxProcessor:
         self.subjects_with_default_titles = [
             "TOANTHPT", "VATLITHPT2", "HOATHPT2", "SINHTHPT2",
             "LICHSUTHPT", "DIALITHPT", "GDCDTHPT2", "NGUVANTHPT","VATLYTHPT2",
-            "TOANTHCS2", "KHTN", "KHXHTHCS", "GDCDTHCS2", "NGUVANTHCS2", "DGNLDHQGHN","DETHI"
+            "TOANTHCS2", "KHTN", "KHXHTHCS", "GDCDTHCS2", "NGUVANTHCS2", "DGNLDHQGHN","DETHI","CAMBRIDGE"
         ]
         self.tinhoc_subjects = ['TINHOCTHPT', 'TINHOC3']
         self.index_question = 0
@@ -62,17 +50,19 @@ class DocxProcessor:
     }
 
    
+
     def process_docx(self, file_path):
         """Xử lý file DOCX và trả về XML string hoặc danh sách lỗi"""
         errors = []
         doc = None
+        
         try:
             print(f">>>>> Debug file path {file_path}")
             doc = Document(file_path)
             self.doc = doc
             self.tinhoc_processor.doc = self.doc
             body = doc.element.body
-
+            
             # Parse các elements theo thứ tự trong body
             paragraphs = []
             try:
@@ -84,45 +74,54 @@ class DocxProcessor:
             except Exception as e:
                 errors.append(f"Lỗi khi đọc cấu trúc body của DOCX: {str(e)}")
                 return "", errors
-
+            
             # Biến trạng thái
             list_hl = []
             group_of_questions = []
             current_tag = None
             current_table = None
-            content_hl = False  # Trạng thái đang trong khối học liệu (sau HL:)
-
+            content_hl = False
+            
             for idx, para in enumerate(paragraphs):
                 try:
                     is_table = isinstance(para, Table)
-
+                    
                     # Xử lý table
                     if is_table:
                         current_table = para
+                        
+                        # ✅ SỬA: Thêm table vào học liệu nếu đang trong chế độ HL
+                        if content_hl and list_hl:
+                            list_hl[-1]['content'].append(current_table)
+                            print(f"[DEBUG] ✓ Thêm table vào học liệu tại idx={idx}")
+                            continue
+                        
+                        # Thêm vào câu hỏi thường
                         if group_of_questions and group_of_questions[-1]['questions']:
                             group_of_questions[-1]['questions'].append(current_table)
                         continue
-
+                    
                     # Bỏ qua paragraph rỗng
                     if len(para.runs) == 0:
                         continue
-
+                    
                     text = para.text.strip()
-
+                    
                     # ——— ƯU TIÊN 1: XỬ LÝ HEADER [tag, posttype, level] ———
                     if re.match(r'^\[.*\]$', text):
                         header = text.replace('[', '').replace(']', '')
                         fields = [f.strip() for f in header.split(',')]
+                        
                         if len(fields) != 3:
                             errors.append(f"Sai format header tại dòng {idx + 1}: {text}")
                             continue
-
+                        
                         dvkt, posttype, knowledge = fields
                         current_tag = dvkt
                         cap_do = ['NB', 'TH', 'VD', 'VDC']
                         knowledge_upper = knowledge.upper()
                         level = cap_do.index(knowledge_upper) if knowledge_upper in cap_do else 0
-
+                        
                         group = {
                             'subject': dvkt.split('_')[0],
                             'tag': dvkt,
@@ -135,7 +134,7 @@ class DocxProcessor:
                         group_of_questions.append(group)
                         content_hl = False
                         continue
-
+                    
                     # ——— ƯU TIÊN 2: XỬ LÝ DÒNG BẮT ĐẦU BẰNG "HL:" ———
                     if text.startswith('HL:'):
                         if list_hl:
@@ -148,41 +147,42 @@ class DocxProcessor:
                                 'level': prev_group['level'],
                                 'questions': []
                             }]
-
+                        
                         hoc_lieu = {
-                            'content': [para],
+                            'content': [para],  # Bắt đầu với paragraph "HL:"
                             'groupOfQ': group_of_questions
                         }
                         content_hl = True
                         list_hl.append(hoc_lieu)
+                        print(f"[DEBUG] ✓ Tạo học liệu mới tại idx={idx}")
                         continue
-
+                    
                     # ——— ƯU TIÊN 3: PHÁT HIỆN CÂU HỎI MỚI ———
                     if re.match(r'^C[âa]u\s*\d', text, re.IGNORECASE):
                         content_hl = False
-
+                    
                     # ——— THÊM VÀO NỘI DUNG HỌC LIỆU (NẾU ĐANG TRONG CHẾ ĐỘ HL) ———
                     if content_hl and list_hl:
                         list_hl[-1]['content'].append(para)
+                        print(f"[DEBUG] ✓ Thêm paragraph vào học liệu tại idx={idx}")
                         continue
-
+                    
                     # ——— THÊM VÀO CÂU HỎI THƯỜNG ———
                     if group_of_questions:
                         para.current_tag = current_tag
                         group_of_questions[-1]['questions'].append(para)
-
+                        
                 except Exception as e:
                     import traceback
                     errors.append(f"Lỗi khi xử lý paragraph #{idx} (text: {getattr(para, 'text', 'N/A')[:50]}...): {str(e)}")
-                    # In traceback nếu cần debug sâu (tùy chọn)
-                    # traceback.print_exc()
-                    continue  # tiếp tục xử lý các phần còn lại
-
+                    continue
+            
             # Tạo XML
             try:
                 if list_hl:
                     root = Element('itemDocuments')
                     for idx_hl, hoc_lieu in enumerate(list_hl):
+                        print(f"[DEBUG] Xử lý học liệu #{idx_hl}, số phần tử content: {len(hoc_lieu['content'])}")
                         item_doc = self.create_hoc_lieu_xml(hoc_lieu, idx_hl)
                         root.append(item_doc)
                 else:
@@ -193,23 +193,21 @@ class DocxProcessor:
             except Exception as e:
                 errors.append(f"Lỗi khi tạo XML: {str(e)}")
                 return "", errors
-
+            
             try:
                 xml_str = self.prettify_xml(root)
                 xml_str = self.post_process_xml(xml_str)
             except Exception as e:
                 errors.append(f"Lỗi khi định dạng XML: {str(e)}")
                 return "", errors
-
+            
             return xml_str, errors
-
+            
         except Exception as e:
-            # Lỗi nghiêm trọng: không thể mở file, không phải DOCX, v.v.
             errors.append(f"Lỗi nghiêm trọng khi xử lý file '{file_path}': {str(e)}")
             import traceback
-            traceback.print_exc()  # chỉ để debug, có thể bỏ trong production
+            traceback.print_exc()
             return "", errors
-
 
     def create_hoc_lieu_xml(self, hoc_lieu, index_hl):
         """Tạo XML cho học liệu"""
@@ -240,96 +238,105 @@ class DocxProcessor:
             # Gọi format_questions với danh sách lỗi
             self.format_questions(group, list_question, [])
         return item_doc
+    
 
+ 
+    def get_indent_html(self, paragraph: Paragraph):
+        """
+        Trả về chuỗi thụt lề trái bằng entity HTML.
+        Giả sử paragraph.paragraph_format.left_indent trả về giá trị EMU (do lỗi hoặc custom),
+        hoặc pt (tiêu chuẩn). Ta phát hiện và xử lý tự động.
+        """
+        try:
+            left_indent = paragraph.paragraph_format.left_indent or 0
+            first_line = paragraph.paragraph_format.first_line_indent or 0
+
+            # Chuyển sang số thực
+            left_val = float(left_indent) if left_indent else 0.0
+            first_val = float(first_line) if first_line else 0.0
+
+            # PHÁT HIỆN: nếu giá trị > 10000 → rất có thể là EMU
+            if left_val > 10000:
+                # Chuyển EMU → pt
+                left_val = left_val / 12700.0
+            if first_val > 10000:
+                first_val = first_val / 12700.0
+
+            total_pt = left_val + max(0.0, first_val)
+        except (AttributeError, TypeError, ValueError):
+            total_pt = 0.0
+
+        if total_pt <= 0:
+            return ""
+
+        # GAS giả định: 1pt = 1px
+        px = int(round(total_pt))
+
+        emsp = px // 16
+        px %= 16
+        ensp = px // 8
+        px %= 8
+        thinsp = px // 4
+        px %= 4
+        hairsp = px // 2
+
+        return "&emsp;" * emsp + "&ensp;" * ensp + "&thinsp;" * thinsp + "&hairsp;" * hairsp
+    
+    def get_alignment_style(self, paragraph: Paragraph) -> Optional[str]:
+        from docx.enum.text import WD_ALIGN_PARAGRAPH
+        alignment = paragraph.alignment
+        if alignment == WD_ALIGN_PARAGRAPH.CENTER:
+            return "center"
+        elif alignment == WD_ALIGN_PARAGRAPH.RIGHT:
+            return "right"
+        elif alignment == WD_ALIGN_PARAGRAPH.JUSTIFY:
+            return "justify"
+        else:
+            return None 
+
+ 
     def xu_ly_hl(self, content):
         """
         Xử lý nội dung học liệu (HL) thành HTML hoàn chỉnh.
-        - Hỗ trợ Paragraph (bold/italic/underline/sub/sup)
-        - Hỗ trợ Ảnh (DrawingML / VML)
-        - Hỗ trợ Bảng (bao gồm nested tables)
-        - Chạy được với cả Document, _Body hoặc list phần tử
+        ✅ ĐÃ SỬA: Phát hiện table đúng cách
         """
         print("[DEBUG] === BẮT ĐẦU HÀM xu_ly_hl ===")
-        # ... (phần code cũ không thay đổi) ...
-        # =================== HELPER: EXTRACT ELEMENTS ===================
+        
+        # =================== HELPER: EXTRACT ELEMENTS =================== 
         def extract_elements(container: Any) -> List[Union[Paragraph, DocxTable]]:
             elements = []
             print(f"[DEBUG] extract_elements: container={type(container)}")
+            
             try:
-                # Nếu container có cả paragraphs và tables → dùng cách chuẩn
                 if hasattr(container, "paragraphs") or hasattr(container, "tables"):
-
-                    paragraphs = list(getattr(container, "paragraphs", []))
-
-                    tables = list(getattr(container, "tables", []))
-
-                    print(f"[DEBUG] Có {len(paragraphs)} paragraphs, {len(tables)} tables")
-
-                    # Tạo list giữ thứ tự xuất hiện thật trong XML
                     body_elem = getattr(container, "_element", None)
-
                     if body_elem is None and hasattr(container, "_body"):
-
                         body_elem = getattr(container._body, "_element", None)
+                    
                     if body_elem is not None:
                         for child in body_elem.iterchildren():
-                            tag = child.tag    
+                            # ✅ SỬA: Kiểm tra CT_Tbl thay vì Table
                             if isinstance(child, CT_P):
-
-                                print(f">>>>>>>>>>> Phát hiện paragraph extract elements functions")
                                 para = Paragraph(child, container)
-
                                 elements.append(para)
-
-                            elif isinstance(child, CT_Tbl):
-
-                                print(f">>>>>>>> Phát hiện table extract elements functions")
-
+                            elif isinstance(child, CT_Tbl):  # ← SỬA ĐÂY
                                 tbl = DocxTable(child, container)
-
                                 elements.append(tbl)
-
-                            tag = child.tag
-                            if tag == qn('w:p'):
-                                elements.append(Paragraph(child, container))
-                            elif tag == qn('w:tbl'):  # ← CÁCH NÀY RẤT AN TOÀN VÀ CHÍNH XÁC
-                                elements.append(DocxTable(child, container))
-
-                        print(f"[DEBUG] Trích xuất trực tiếp từ XML body: {len(elements)} phần tử")
+                                print(f"[DEBUG] ✓ Phát hiện table trong HL")
+                        
+                        print(f"[DEBUG] Trích xuất từ XML body: {len(elements)} phần tử")
                         return elements
                     else:
-                        # fallback: nối paragraphs và tables nếu không xác định được thứ tự
+                        paragraphs = list(getattr(container, "paragraphs", []))
+                        tables = list(getattr(container, "tables", []))
                         elements = paragraphs + tables
                         print("[WARN] Không xác định được body element, nối thẳng paragraphs+tables")
                         return elements
             except Exception as e:
                 print(f"[ERROR] extract_elements lỗi: {e}")
                 traceback.print_exc()
-            # fallback cuối cùng (cũ)
-            try:
-                for child in container._element.iterchildren():
+                return elements
 
-                    if isinstance(child, CT_P):
-
-                        elements.append(Paragraph(child, container))
-
-                    elif isinstance(child, CT_Tbl):
-                        print(f">>>>>>> Detected table")
-
-                        elements.append(DocxTable(child, container))
-
-            except Exception as e:
-                print(f"[WARN] fallback extract_elements lỗi: {e}")
-
-                traceback.print_exc()
-
-            return elements
-        
-        
-
-        # =================== HELPER: CONVERT PARAGRAPH ==================
-
-            # return f"<p>{html}</p>  "
         # =================== CHUẨN BỊ DANH SÁCH PHẦN TỬ ===================
         if isinstance(content, list):
             all_elements = content
@@ -340,225 +347,376 @@ class DocxProcessor:
         else:
             print(f"[WARN] Loại đầu vào không hỗ trợ: {type(content)}")
             return ""
-        # =================== DUYỆT TOÀN BỘ PHẦN TỬ ===================
-        html_parts = []
-        for i, el in enumerate(all_elements):
-
-            print(f"[DEBUG] --- Xử lý phần tử {i}: {type(el).__name__}")
-            try:
-                if isinstance(el, Paragraph):
-                    print(f">>>>>> convert paragraph  123132")
-                    html_parts.append(self.convert_paragraph_for_hl(el))
-                elif isinstance(el, CT_Tbl):
-                    print(f">>>>>>> phát hiện table")
-                    html_parts.append(self.convert_table_to_html(el, is_hoc_lieu=True))
-                else:
-                    print(f"[WARN] Bỏ qua phần tử loại: {type(el)}")
-            except Exception as e:
-                print(f"[ERROR] Lỗi xử lý phần tử {i}: {e}")
-                traceback.print_exc()
-                html_parts.append(f"<!-- ERROR tại phần tử {i} -->")
         
-        # =================== KẾT THÚC ===================
-        html = "".join(html_parts)
+        # =================== 🔧 CHUẨN HÓA PHẦN TỬ ===================
+        normalized_elements = []
+        for el in all_elements:
+            if isinstance(el, CT_P):
+                normalized_elements.append(Paragraph(el, self.doc))
+            elif isinstance(el, CT_Tbl):  # ← SỬA ĐÂY
+                normalized_elements.append(DocxTable(el, self.doc))
+                print(f"[DEBUG] ✓ Chuẩn hóa table thành DocxTable")
+            elif isinstance(el, (Paragraph, DocxTable)):
+                normalized_elements.append(el)
+            else:
+                print(f"[WARN] Bỏ qua phần tử không hỗ trợ trong HL: {type(el)}")
+        
+        all_elements = normalized_elements
+        
+        # =================== XÂY DỰNG FRAGMENTS ===================
+        fragments = []
+        for i, el in enumerate(all_elements):
+            print(f"[DEBUG] --- Xử lý phần tử {i}: {type(el).__name__}")
+            
+            if isinstance(el, DocxTable):
+                table_html = self.convert_table_to_html(el, is_hoc_lieu=True)
+                fragments.append({
+                    'type': 'plain',
+                    'alignment': None,
+                    'content': table_html
+                })
+                print(f"[DEBUG] ✓ Đã convert table sang HTML")
+            elif isinstance(el, Paragraph):
+                align = self.get_alignment_style(el)
+                para_html = self.convert_paragraph_for_hl(el)
+                
+                if para_html.endswith(' '):
+                    para_html = para_html[:-5]
+                
+                if align in ("center", "right", "justify"):
+                    fragments.append({
+                        'type': 'aligned',
+                        'alignment': align,
+                        'content': para_html
+                    })
+                else:
+                    fragments.append({
+                        'type': 'plain',
+                        'alignment': None,
+                        'content': para_html
+                    })
+            else:
+                print(f"[WARN] Bỏ qua phần tử loại: {type(el)}")
+        
+        # =================== GOM NHÓM VÀ RENDER ===================
+        result_parts = []
+        i = 0
+        while i < len(fragments):
+            frag = fragments[i]
+            if frag['type'] == 'aligned':
+                current_align = frag['alignment']
+                group_contents = []
+                j = i
+                while (j < len(fragments) and
+                    fragments[j]['type'] == 'aligned' and
+                    fragments[j]['alignment'] == current_align):
+                    group_contents.append(fragments[j]['content'])
+                    j += 1
+                # Ghép nội dung, nhưng đảm bảo giữa các phần tử có <br>
+                grouped_html = f'<div style="text-align:{current_align}">{" ".join(group_contents)}</div>'
+                result_parts.append(grouped_html)
+                if j < len(fragments):
+                    result_parts.append(' ')
+                i = j
+            else:
+                # Xử lý plain content (có thể là <br/> từ paragraph rỗng)
+                content = frag['content']
+                result_parts.append(content)
+                i += 1
+
+        # ✅ XỬ LÝ NHIỀU <br/> LIÊN TIẾP: chuyển "<br/><br/>" thành đúng 2 dòng
+        html = "".join(result_parts)
         print("[DEBUG] === KẾT THÚC HÀM xu_ly_hl ===")
         return html
 
-    def normalize_line_breaks(self, text: str) -> str:
-        """Chuyển mọi dạng xuống dòng (kể cả shift+enter) thành <br/>"""
-        return text.replace('\r\n', '<br/>').replace('\n', '<br/>').replace('\r', '<br/>')
+
+    def convert_paragraph_for_hl(self, p: Paragraph) -> str:
+            """Xử lý paragraph hoặc table trong học liệu (HL) - CHỈ XỬ LÝ NỘI DUNG, KHÔNG XỬ LÝ ALIGNMENT."""
+        
+            # ✅ MỞ RỘNG: hỗ trợ cả Table
+            if isinstance(p, DocxTable):
+                return self.convert_table_to_html(p, is_hoc_lieu=True)
+
+            # Nếu không phải Paragraph hoặc Table → trả về rỗng
+            if not isinstance(p, Paragraph):
+                print(f"[WARN] convert_paragraph_for_hl nhận đầu vào không hợp lệ: {type(p)}")
+                return "<br>"
+
+            try:
+                # 1. CẮT 'HL:' nếu có
+                full_text = p.text
+                hl_match = re.match(r"^\s*(H\s*L\s*[:：\-]\s*)", full_text, re.IGNORECASE)
+                hl_cut_pos = hl_match.end() if hl_match else 0
+                
+                # 2. XÂY DỰNG HTML từ runs (sau khi cắt HL:)
+                html = ""
+                current_pos = 0
+                
+                for run in p.runs:
+                    run_text = run.text or ""
+                    if not run_text:
+                        continue
+                    
+                    run_start = current_pos
+                    run_end = current_pos + len(run_text)
+                    current_pos = run_end
+                    
+                    # Bỏ qua phần text nằm trong vùng HL:
+                    if run_end <= hl_cut_pos:
+                        continue
+                    
+                    if run_start < hl_cut_pos:
+                        offset = hl_cut_pos - run_start
+                        effective_text = run_text[offset:]
+                    else:
+                        effective_text = run_text
+                    
+                    if not effective_text:
+                        continue
+                    
+                    seg = self.escape_html(effective_text)
+                    
+                    # Áp dụng format
+                    if run.bold:
+                        seg = f"<strong>{seg}</strong>"
+                    if run.italic:
+                        seg = f"<i>{seg}</i>"
+                    if run.underline:
+                        seg = f"<u>{seg}</u>"
+                    if getattr(run.font, 'superscript', False):
+                        seg = f"<sup>{seg}</sup>"
+                    if getattr(run.font, 'subscript', False):
+                        seg = f"<sub>{seg}</sub>"
+                    if getattr(run.font, 'strike', False) or getattr(run, 'strike', False):
+                        seg = f"<strike>{seg}</strike>"
+                    
+                    html += seg
+
+                # 3. XỬ LÝ ẢNH từ runs
+                for run in p.runs:
+                    try:
+                        imgs = self._get_image_tags_from_run(run)
+                        if imgs:
+                            html += "".join(imgs)
+                    except Exception as e:
+                        print(f"[WARN] Lỗi _get_image_tags_from_run trong run: {e}")
+
+                # 4. XỬ LÝ ẢNH DRAWING TRỰC TIẾP
+                try:
+                    drawings = p._element.findall('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}drawing')
+                    for drawing in drawings:
+                        blip = drawing.find('.//{http://schemas.openxmlformats.org/drawingml/2006/main}blip')
+                        if blip is not None:
+                            rId = blip.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed')
+                            if rId:
+                                width_emu, height_emu = self.lay_kich_thuoc_tu_word_xml(drawing)
+                                img_tag = self._make_img_tag_from_rid(rId, width_emu, height_emu)
+                                if img_tag:
+                                    html += img_tag
+                except Exception as e:
+                    print(f"[ERROR] Lỗi xử lý drawing trực tiếp: {e}")
+                    import traceback
+                    traceback.print_exc()
+
+                # 5. ÁP DỤNG THỤT LỀ (KHÔNG XỬ LÝ ALIGNMENT Ở ĐÂY)
+                html = html.strip()
+                if not html:
+                    return "<br>"
+
+                # Thêm thụt lề trái
+                leading_spaces = self.get_indent_html(p)
+                html = leading_spaces + html
+
+                # CHỈ TRẢ VỀ NỘI DUNG + <br/>, KHÔNG XỬ LÝ ALIGNMENT
+                return html + "<br>"
+
+            except Exception as e:
+                print(f"[ERROR] convert_paragraph_for_hl: {e}")
+                import traceback
+                traceback.print_exc()
+                return ""
+
+
+
 
     # def convert_table_to_html(self, table: DocxTable, is_hoc_lieu=False) -> str:
-    #     """
-    #     Convert table sang HTML (hỗ trợ nested table).
-    #     NOTE: Bỏ colspan (theo yêu cầu).
-    #     """
     #     print("[DEBUG][convert_table_to_html] === BẮT ĐẦU XỬ LÝ TABLE ===")
     #     html = "<table class='table-material-question'>"
     #     try:
-    #         # Dùng API python-docx chính thức: table.rows, cell.paragraphs, cell.tables
     #         for r_idx, row in enumerate(table.rows):
     #             html += "<tr>"
-    #             print(f"[DEBUG] → Row {r_idx}, số ô: {len(row.cells)}")
     #             for c_idx, cell in enumerate(row.cells):
-    #                 print(f"[DEBUG]   → Cell ({r_idx},{c_idx}) bắt đầu xử lý")
-    #                 parts: List[str] = []
-    #                 # 1) Nếu cell có nested tables theo python-docx -> xử lý trước
-    #                 try:
-    #                     if hasattr(cell, "tables") and cell.tables:
-    #                         print(f"[DEBUG]   Nested tables count in cell ({r_idx},{c_idx}): {len(cell.tables)}")
-    #                         for nt_idx, nested in enumerate(cell.tables):
-    #                             try:
-    #                                 parts.append(self.convert_table_to_html(nested))
-    #                             except Exception as e:
-    #                                 print(f"[ERROR] Lỗi xử lý nested table ({r_idx},{c_idx},{nt_idx}): {e}")
-    #                                 traceback.print_exc()
-    #                                 parts.append("<!-- ERROR nested -->")
-    #                 except Exception as e:
-    #                     print(f"[WARN] Không thể đọc cell.tables tại ({r_idx},{c_idx}): {e}")
-    #                 # 2) Thêm các paragraph trong cell (theo thứ tự)
-    #                 try:
-    #                     if hasattr(cell, "paragraphs"):
-    #                         for p_idx, p in enumerate(cell.paragraphs):
-    #                             try:
-    #                                 # convert_paragraph_to_html đã tồn tại và trả về <p>..</p>
-    #                                 para_html = self.convert_content_to_html(p)
-    #                                 parts.append(para_html)
-    #                             except Exception as e:
-    #                                 print(f"[WARN] Lỗi convert paragraph trong cell ({r_idx},{c_idx},p{p_idx}): {e}")
-    #                                 traceback.print_exc()
-    #                                 # fallback: raw text
-    #                                 try:
-    #                                     parts.append(p.text)
-    #                                 except Exception:
-    #                                     parts.append("")
-    #                 except Exception as e:
-    #                     print(f"[WARN] Không thể đọc cell.paragraphs tại ({r_idx},{c_idx}): {e}")
-    #                 # 3) Join parts, trim; nếu rỗng -> dùng &nbsp;
+    #                 parts = []
+    #                 # Nested tables
+    #                 if hasattr(cell, "tables") and cell.tables:
+    #                     for nested in cell.tables:
+    #                         parts.append(self.convert_table_to_html(nested, is_hoc_lieu))
+    #                 # Paragraphs
+    #                 if hasattr(cell, "paragraphs"):
+    #                     for p in cell.paragraphs:
+    #                         # para_html = ""
+    #                         # if is_hoc_lieu:
+    #                         #     para_html = self.convert_paragraph_for_hl(p)
+    #                         # else:
+    #                         #     para_html = self.convert_content_to_html(p)
+    #                         # if para_html:
+    #                         #     # ✅ KHÔNG bọc para_html trong <p>...</p> trong table!
+    #                         #     parts.append(para_html)
+    #                         if is_hoc_lieu:
+    #                             para_html = self.convert_paragraph_for_hl(p)
+    #                             if para_html:
+    #                                 parts.append(para_html)  # ✅ KHÔNG bọc <p>...</p>
+    #                         else:
+    #                             para_html = self.convert_content_to_html(p)
+    #                             parts.append(para_html)
     #                 cell_html = "".join(parts).strip()
     #                 if not cell_html:
     #                     cell_html = "&nbsp;"
-    #                 # 4) **Không sinh colspan nữa** (user yêu cầu xóa colspan)
     #                 html += f"<td>{cell_html}</td>"
     #             html += "</tr>"
     #     except Exception as e:
-    #         print(f"[ERROR] convert_table_to_html gặp lỗi tổng thể: {e}")
+    #         print(f"[ERROR] convert_table_to_html: {e}")
     #         traceback.print_exc()
     #     html += "</table><br>"
-    #     print("[DEBUG][convert_table_to_html] === KẾT THÚC ===")
     #     return html
 
 
-    def convert_paragraph_for_hl(self, p: Paragraph) -> str:
-        self.detect_soft_breaks_in_paragraph(p)
-        """Xử lý paragraph trong học liệu (HL).
-        - CẮT BỎ phần 'HL: ...' nếu paragraph đó bắt đầu bằng 'HL:'.
-        - Giữ định dạng (bold/italic/...), ảnh, bảng.
-        - Thêm <br/> ở cuối để xuống dòng như logic cũ.
-        """
-        try:
-            full_text = p.text
-            html = ""
-
-            # === 1. CẮT TIỀN TỐ 'HL:' NẾU CÓ ===
-            import re
-            hl_match = re.match(r"^\s*(H\s*L\s*[:：\-]\s*)", full_text, re.IGNORECASE)
-            hl_cut_pos = hl_match.end() if hl_match else 0
-
-            # === 2. XÂY DỰNG HTML CHO PHẦN CÒN LẠI ===
-            current_pos = 0
-            for run in p.runs:
-                run_text = run.text or ""
-                if not run_text:
-                    continue
-                run_start = current_pos
-                run_end = current_pos + len(run_text)
-                current_pos = run_end
-
-                if run_end <= hl_cut_pos:
-                    continue
-
-                if run_start < hl_cut_pos:
-                    offset = hl_cut_pos - run_start
-                    effective_text = run_text[offset:]
-                else:
-                    effective_text = run_text
-
-                if not effective_text:
-                    continue
-
-                seg = self.escape_html(effective_text)
-                if run.bold:
-                    seg = f"<b>{seg}</b>"
-                if run.italic:
-                    seg = f"<i>{seg}</i>"
-                if run.underline:
-                    seg = f"<u>{seg}</u>"
-                if getattr(run.font, 'superscript', False):
-                    seg = f"<sup>{seg}</sup>"
-                if getattr(run.font, 'subscript', False):
-                    seg = f"<sub>{seg}</sub>"
-                if getattr(run.font, 'strike', False) or getattr(run, 'strike', False):
-                    seg = f"<strike>{seg}</strike>"
-                html += seg
-
-            # === 3. XỬ LÝ ẢNH TRONG RUNS ===
-            for run in p.runs:
-                try:
-                    imgs = self._get_image_tags_from_run(run)
-                    if imgs:
-                        html += "".join(imgs)
-                except Exception as e:
-                    print(f"[WARN] Lỗi _get_image_tags_from_run trong run: {e}")
-
-            # === 4. XỬ LÝ ẢNH DRAWING TRỰC TIẾP TRONG PARAGRAPH ===
-            try:
-                drawings = p._element.findall('.//{http://schemas.openxmlformats.org/wordprocessingml/2006/main}drawing')
-                for drawing in drawings:
-                    blip = drawing.find('.//{http://schemas.openxmlformats.org/drawingml/2006/main}blip')
-                    if blip is not None:
-                        rId = blip.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}embed')
-                        if rId:
-                            width_emu, height_emu = self.lay_kich_thuoc_tu_word_xml(drawing)
-                            img_tag = self._make_img_tag_from_rid(rId, width_emu, height_emu)
-                            if img_tag:
-                                html += img_tag
-            except Exception as e:
-                print(f"[ERROR] Lỗi xử lý drawing trực tiếp: {e}")
-                import traceback
-                traceback.print_exc()
-
-            # === 5. THÊM XUỐNG DÒNG NHƯ LOGIC CŨ ===
-            if html.strip():
-                html += "<br/>"
-
-            return html
-
-        except Exception as e:
-            print(f"[ERROR] convert_paragraph_for_hl: {e}")
-            import traceback
-            traceback.print_exc()
-            return ""
+    def get_vmerge_value(self, tc_pr):
+        """Trích xuất giá trị vMerge, mặc định là 'continue' nếu có thẻ nhưng không có w:val."""
+        if tc_pr is None:
+            return None
+        vmerge = tc_pr.find(qn('w:vMerge'))
+        if vmerge is None:
+            return None
+        val = vmerge.get(qn('w:val'))
+        return val if val is not None else 'continue'
 
     def convert_table_to_html(self, table: DocxTable, is_hoc_lieu=False) -> str:
-        print("[DEBUG][convert_table_to_html] === BẮT ĐẦU XỬ LÝ TABLE ===")
-        html = "<table class='table-material-question'>"
+        # Thêm border, cellpadding, cellspacing như HTML "đúng"
+        html = '<table class="table-material-question">'
+        grid = []  # grid[r][c] = dict (ô gốc) hoặc "OCCUPIED"
+
         try:
-            for r_idx, row in enumerate(table.rows):
-                html += "<tr>"
-                for c_idx, cell in enumerate(row.cells):
-                    parts = []
-                    # Nested tables
-                    if hasattr(cell, "tables") and cell.tables:
-                        for nested in cell.tables:
-                            parts.append(self.convert_table_to_html(nested, is_hoc_lieu))
-                    # Paragraphs
-                    if hasattr(cell, "paragraphs"):
-                        for p in cell.paragraphs:
-                            # para_html = ""
-                            # if is_hoc_lieu:
-                            #     para_html = self.convert_paragraph_for_hl(p)
-                            # else:
-                            #     para_html = self.convert_content_to_html(p)
-                            # if para_html:
-                            #     # ✅ KHÔNG bọc para_html trong <p>...</p> trong table!
-                            #     parts.append(para_html)
-                            if is_hoc_lieu:
-                                para_html = self.convert_paragraph_for_hl(p)
-                                if para_html:
-                                    parts.append(para_html)  # ✅ KHÔNG bọc <p>...</p>
+            rows = table.rows
+            n_rows = len(rows)
+
+            # Giai đoạn 1: Phân tích từng dòng với con trỏ cột logic
+            for r_idx in range(n_rows):
+                row = rows[r_idx]
+                while len(grid) <= r_idx:
+                    grid.append([])
+
+                logical_col = 0  # Con trỏ cột logic, bắt đầu từ 0 mỗi dòng
+
+                for cell_xml in row._element:
+                    if cell_xml.tag != qn('w:tc'):
+                        continue
+
+                    tc_pr = cell_xml.find(qn('w:tcPr'))
+
+                    # --- COLSPAN ---
+                    grid_span = tc_pr.find(qn('w:gridSpan')) if tc_pr is not None else None
+                    colspan = int(grid_span.get(qn('w:val'))) if grid_span is not None else 1
+
+                    # --- Kiểm tra vMerge ---
+                    vmerge_val = self.get_vmerge_value(tc_pr)
+
+                    if vmerge_val == "continue":
+                        # Đánh dấu các ô bị chiếm trong grid
+                        for dc in range(colspan):
+                            c = logical_col + dc
+                            while len(grid[r_idx]) <= c:
+                                grid[r_idx].append(None)
+                            grid[r_idx][c] = "OCCUPIED"
+                        logical_col += colspan
+                        continue
+
+                    # --- Tính ROWSPAN bằng cách dò xuống dưới ---
+                    rowspan = 1
+                    for rr in range(r_idx + 1, n_rows):
+                        next_row = rows[rr]
+                        next_logical_col = 0
+                        found = False
+
+                        for next_cell in next_row._element:
+                            if next_cell.tag != qn('w:tc'):
+                                continue
+
+                            next_tc_pr = next_cell.find(qn('w:tcPr'))
+                            next_grid_span = next_tc_pr.find(qn('w:gridSpan')) if next_tc_pr is not None else None
+                            next_colspan = int(next_grid_span.get(qn('w:val'))) if next_grid_span is not None else 1
+
+                            # Nếu đúng cột logic cần kiểm tra
+                            if next_logical_col == logical_col:
+                                next_vmerge = self.get_vmerge_value(next_tc_pr)
+                                if next_vmerge == "continue":
+                                    rowspan += 1
+                                    found = True
+                                break
+
+                            next_logical_col += next_colspan
+
+                        if not found:
+                            break
+
+                    # Tạo cell object
+                    cell_obj = _Cell(cell_xml, row)
+                    cell_data = {
+                        "cell": cell_obj,
+                        "xml": cell_xml,
+                        "rowspan": rowspan,
+                        "colspan": colspan,
+                    }
+
+                    # Đánh dấu vào grid
+                    for dr in range(rowspan):
+                        tr = r_idx + dr
+                        while len(grid) <= tr:
+                            grid.append([])
+                        for dc in range(colspan):
+                            tc = logical_col + dc
+                            while len(grid[tr]) <= tc:
+                                grid[tr].append(None)
+                            if dr == 0 and dc == 0:
+                                grid[tr][tc] = cell_data
                             else:
-                                para_html = self.convert_content_to_html(p)
-                                parts.append(para_html)
-                    cell_html = "".join(parts).strip()
-                    if not cell_html:
-                        cell_html = "&nbsp;"
-                    html += f"<td>{cell_html}</td>"
+                                grid[tr][tc] = "OCCUPIED"
+
+                    logical_col += colspan
+
+            # Giai đoạn 2: Render HTML từ grid
+            for row in grid:
+                html += "<tr>"
+                for cell in row:
+                    if not isinstance(cell, dict):
+                        continue
+                    parts = []
+                    for child in cell["xml"]:
+                        if child.tag == qn("w:tbl"):
+                            nested = DocxTable(child, cell["cell"])
+                            parts.append(self.convert_table_to_html(nested, is_hoc_lieu))
+                        elif child.tag == qn("w:p"):
+                            p = Paragraph(child, cell["cell"])
+                            content = (
+                                self.convert_paragraph_for_hl(p) if is_hoc_lieu
+                                else self.convert_content_to_html(p)
+                            )
+                            parts.append(content)
+                    content = "".join(parts).strip() or "&nbsp;"
+                    attrs = []
+                    if cell["rowspan"] > 1:
+                        attrs.append(f'rowspan="{cell["rowspan"]}"')
+                    if cell["colspan"] > 1:
+                        attrs.append(f'colspan="{cell["colspan"]}"')
+                    html += f"<td {' '.join(attrs)}>{content}</td>"
                 html += "</tr>"
+
         except Exception as e:
-            print(f"[ERROR] convert_table_to_html: {e}")
+            import traceback
+            print("[ERROR] convert_table_to_html:", e)
             traceback.print_exc()
-        html += "</table><br>"
+
+        html += "</table>"
         return html
 
     def wrap_style(self, text, style):
@@ -854,196 +1012,397 @@ class DocxProcessor:
             traceback.print_exc()
             return None
         
+    def get_hyperlinks_from_paragraph(self,paragraph: Paragraph):
+        links = []
+        part = paragraph.part
+
+        for hyperlink in paragraph._p.findall(qn('w:hyperlink')):
+            r_id = hyperlink.get(qn('r:id'))
+            if r_id:
+                url = part.rels[r_id].target_ref
+                links.append(url)
+
+        return links
+
+    # def protocol_of_q(self, question, each_question_xml, subject, errors, question_index):
+    #     """Phân tích cấu trúc câu hỏi, nhận danh sách errors và số thứ tự câu hỏi question_index"""
+    #     # Chia thành phần: nội dung câu hỏi và lời giải
+    #     thanh_phan_1q = []
+
+    #     for idx, para in enumerate(question):
+
+    #         if idx == 0:
+
+    #             thanh_phan_1q.append([para])
+
+    #             continue
+    #         if isinstance(para, Paragraph):
+
+    #             text = para.text.strip().lower()
+    #             # print(f">>>>>> debug text phan loai: {text}")
+
+    #             # if re.match(r'^l[ờờ]i gi[ảả]i', text):
+    #             if re.match(r'^\s*l[ờơ]i\s+gi[ảẩ]i\s*[:：]?', text, re.IGNORECASE):
+
+    #                 thanh_phan_1q.append([])
+
+    #                 continue
+    #         if thanh_phan_1q:
+    #             thanh_phan_1q[-1].append(para)
+
+    #     if len(thanh_phan_1q) < 2:
+    #         # raise ValueError(f"Thiếu 'Lời giải' trong câu: {question[0].text[:50]}")
+    #         error_msg = f"Thiếu 'Lời giải' trong câu hỏi {question_index}"
+
+    #         errors.append(error_msg)
+
+    #         print(f"[ERROR] protocol_of_q: {error_msg}")
+
+    #         SubElement(each_question_xml, 'contentquestion').text = ''
+
+    #         SubElement(each_question_xml, 'explainquestion').text = f'--- LỖI: Thiếu lời giải ---'
+
+    #         SubElement(each_question_xml, 'typeAnswer').text = '0' # Mặc định
+            
+    #         return # Kết thúc xử lý câu hỏi này
+
+    #     # Phân tích nội dung câu hỏi và lời giải
+    #     thanh_phan_cau_hoi = []
+
+    #     link_cau_hoi = []
+
+    #     for idx, para in enumerate(thanh_phan_1q[0]):
+    #         if isinstance(para, Paragraph):
+    #             text = para.text.strip()
+    #             print(f">>>>>> debug text cau hoi: {text}")
+    #             hyperlinks = self.get_hyperlinks_from_paragraph(para)
+
+    #             for link in hyperlinks:
+    #                 if link not in link_cau_hoi:
+    #                     link_cau_hoi.append(link)
+    #             # ——— XỬ LÝ DÒNG BẮT ĐẦU BẰNG "Audio:" ———
+    #             if text.startswith('Audio:'):
+    #                 # print(f">>>>>> debug audio content: {audio_content}")
+    #                 audio_content = text[6:].strip()
+                   
+    #                 # Nếu ngay sau có link hợp lệ → dùng luôn
+    #                 if audio_content.startswith('https'):
+    #                     link_cau_hoi.append(f'Audio:{audio_content}')
+    #                 else:
+    #                     # Nếu không, kiểm tra paragraph tiếp theo có URL không
+    #                     if idx + 1 < len(thanh_phan_1q[0]):
+
+    #                         next_para = thanh_phan_1q[0][idx + 1]
+
+    #                         if isinstance(next_para, Paragraph):
+
+    #                             next_text = next_para.text.strip()
+
+    #                             # Kiểm tra link thuần hoặc link có hyperlink (giả lập: chỉ kiểm tra text)
+
+    #                             if next_text.startswith('https'):
+
+    #                                 link_cau_hoi.append(f'Audio:{next_text}')
+
+    #                                 # Bỏ qua para tiếp theo trong nội dung chính
+    #                                 # (nhưng vẫn giữ nguyên logic append → sẽ loại sau)
+    #                 continue  # Dù thế nào cũng không đưa "Audio:" vào nội dung chính
+
+    #             # ——— XỬ LÝ URL THUẦN TRONG ĐOẠN VĂN ———
+    #             # Tìm mọi URL hợp lệ trong text (kể cả link bị kèm chữ)
+    #             # url_matches = re.findall(r'https?://[^\s]+', text)
+    #             # # print(f">>>>>> debug url matches: {url_matches}")
+    #             # found_valid_url = False
+    #             # for url in url_matches:
+    #             #     url_clean = url.rstrip('.,;:')
+    #             #     if url_clean not in [link.replace('Audio:', '', 1) for link in link_cau_hoi]:
+    #             #         link_cau_hoi.append(url_clean)
+    #             #         found_valid_url = True
+    #             # # Nếu URL đứng riêng (không kèm text quan trọng), không thêm vào nội dung chính
+    #             # if url_matches and not text[:text.find(url_matches[0])].strip():
+    #             #     continue
+
+    #             url_matches = re.findall(r'https?://[^\s]+', text)
+    #             found_valid_url = False
+
+    #             # Kiểm tra hyperlink trong các run
+    #             if isinstance(para, Paragraph):
+    #                 for run in para.runs:
+    #                     # Kiểm tra hyperlink trong run
+    #                     if run._element.rPr is not None:
+    #                         rpr = run._element.rPr
+    #                         # Tìm hyperlink
+    #                         hyperlinks = run._element.xpath('.//w:hyperlink')
+    #                         for hyperlink in hyperlinks:
+    #                             r_id = hyperlink.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id')
+    #                             if r_id:
+    #                                 # Lấy relationship từ document
+    #                                 rel = para.part.rels[r_id]
+    #                                 if rel.reltype == 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink':
+    #                                     url = rel.target_ref
+    #                                     if url.startswith('http'):
+    #                                         link_cau_hoi.append(url)
+    #                                         found_valid_url = True
+    #                                         print(f">>>>>> [HYPERLINK DETECTED] {url}")
+
+    #             # Thêm URL thuần (nếu có)
+    #             for url in url_matches:
+    #                 url_clean = url.rstrip('.,;:')
+    #                 if url_clean not in [link.replace('Audio:', '', 1) for link in link_cau_hoi]:
+    #                     link_cau_hoi.append(url_clean)
+    #                     found_valid_url = True
+    #                     print(f">>>>>> [PLAIN URL DETECTED] {url_clean}")
+    #             # Thêm vào nội dung chính nếu không phải dòng audio hoặc link thuần
+    #             thanh_phan_cau_hoi.append(para)
+    #     # Xử lý links
+    #     self.xu_ly_link_cau_hoi(link_cau_hoi, each_question_xml)
+
+    #     # Phân tích lời giải
+    #     thanh_phan_hdg = []
+
+    #     link_speech_explain = []
+
+    #     has_sharpened = False
+
+    #     for idx, para in enumerate(thanh_phan_1q[1]):
+    #         if idx == 0:
+
+    #             thanh_phan_hdg.append([para])
+    #             continue
+
+    #         if isinstance(para, Paragraph):
+
+    #             text = para.text.strip()
+    #             print(f">>>>>> debug text loi giai: {text}")
+               
+
+    #             if text.startswith('###'):
+    #                 has_sharpened = True
+    #                 thanh_phan_hdg.append([])
+
+    #                 continue
+    #             # URLs trong HDG
+    #             urls = re.findall(r'http?://[^\s]+', text)
+
+    #             for url in urls:
+
+    #                 link_speech_explain.append(url)
+
+    #                 continue
+
+    #         if thanh_phan_hdg:
+
+    #             thanh_phan_hdg[-1].append(para)
+
+    #     # Xử lý urlSpeechExplain
+    #     if link_speech_explain:
+
+    #         for link in link_speech_explain:
+    #             if link.endswith(('.mp3', '.mp4')):
+    #                 SubElement(each_question_xml, 'urlSpeechExplain').text = link
+
+    #     # Xác định dạng câu hỏi
+    #     answer = thanh_phan_hdg[0][0].text.strip() if thanh_phan_hdg[0] else ''
+
+    #     cau_sau_xu_ly = [thanh_phan_cau_hoi, thanh_phan_hdg]
+
+    #     # audio = [link for link in link_cau_hoi if 'Audio:' in link]
+    #     audio = []
+
+    #     for item in question:
+
+    #         if isinstance(item, Paragraph):
+
+    #             txt = item.text.strip()
+    #             if txt.startswith('Audio:'):
+    #                 print(f">>>>>> debug txt have audio {txt}")
+
+    #                 audio.append(txt)
+    #             # if txt.startswith('https://mathplay.onluyen.vn'):
+    #             #     print(f">>>>>> debug txt have audio {txt}")
+
+    #                 audio.append(txt)
+
+    #     print(f">>>>>>>>> debug has_sharpened: {has_sharpened}")
+
+    #     # Routing theo subject
+    #     if self.is_tinhoc_subject(subject):
+    #         self.route_to_tinhoc_module(cau_sau_xu_ly, each_question_xml, audio, answer, subject, errors, question_index)
+    #     else:
+    #         self.route_to_default_module(cau_sau_xu_ly, each_question_xml, audio, answer, subject, errors, question_index,has_sharpened)
+   
+
     def protocol_of_q(self, question, each_question_xml, subject, errors, question_index):
         """Phân tích cấu trúc câu hỏi, nhận danh sách errors và số thứ tự câu hỏi question_index"""
         # Chia thành phần: nội dung câu hỏi và lời giải
         thanh_phan_1q = []
 
         for idx, para in enumerate(question):
-
             if idx == 0:
-
                 thanh_phan_1q.append([para])
-
                 continue
             if isinstance(para, Paragraph):
-
                 text = para.text.strip().lower()
-
-                # if re.match(r'^l[ờờ]i gi[ảả]i', text):
                 if re.match(r'^\s*l[ờơ]i\s+gi[ảẩ]i\s*[:：]?', text, re.IGNORECASE):
-
                     thanh_phan_1q.append([])
-
                     continue
             if thanh_phan_1q:
                 thanh_phan_1q[-1].append(para)
 
         if len(thanh_phan_1q) < 2:
-            # raise ValueError(f"Thiếu 'Lời giải' trong câu: {question[0].text[:50]}")
             error_msg = f"Thiếu 'Lời giải' trong câu hỏi {question_index}"
-
             errors.append(error_msg)
-
             print(f"[ERROR] protocol_of_q: {error_msg}")
-            # Trả về hoặc tiếp tục để xử lý các phần khác nếu có thể, mặc dù thiếu lời giải
-            # Có thể thêm phần tử giả hoặc bỏ qua câu hỏi này
-            # Trong trường hợp này, ta tiếp tục để tạo XML rỗng hoặc với thông tin cơ bản
-            # Tuy nhiên, để đảm bảo XML hợp lệ, ta nên bỏ qua phần xử lý sâu hơn
-            # hoặc tạo các phần tử cần thiết với giá trị mặc định.
-            # Ví dụ: Tạo phần tử trống cho contentquestion và explainquestion
             SubElement(each_question_xml, 'contentquestion').text = ''
-
             SubElement(each_question_xml, 'explainquestion').text = f'--- LỖI: Thiếu lời giải ---'
-
-            SubElement(each_question_xml, 'typeAnswer').text = '0' # Mặc định
-            
-            return # Kết thúc xử lý câu hỏi này
+            SubElement(each_question_xml, 'typeAnswer').text = '0'
+            return
 
         # Phân tích nội dung câu hỏi và lời giải
         thanh_phan_cau_hoi = []
-
         link_cau_hoi = []
-        # Xử lý links và nội dung
-        # for para in thanh_phan_1q[0]:
-
-        #     if isinstance(para, Paragraph):
-
-        #         text = para.text.strip()
-
-        #         # Phát hiện Audio
-        #         if text.startswith('Audio:'):
-
-        #             link_cau_hoi.append(text)
-
-        #             continue
-        #         # Phát hiện URLs
-        #         urls = re.findall(r'https?://[^\s]+', text)
-
-        #         for url in urls:
-
-        #             if url not in link_cau_hoi:
-
-        #                 link_cau_hoi.append(url)
-
-        #         if urls and not text.replace(urls[0], '').strip():
-
-        #             continue
-
-        #     thanh_phan_cau_hoi.append(para)
 
         for idx, para in enumerate(thanh_phan_1q[0]):
             if isinstance(para, Paragraph):
                 text = para.text.strip()
-                # ——— XỬ LÝ DÒNG BẮT ĐẦU BẰNG "Audio:" ———
+                print(f">>>>>> debug text cau hoi: {text}")
+                
+                # ===== FIX: DETECT HYPERLINK TRƯỚC TIÊN =====
+                # 1. Lấy hyperlink từ paragraph (method có sẵn)
+                hyperlinks = self.get_hyperlinks_from_paragraph(para)
+                for link in hyperlinks:
+                    if link not in link_cau_hoi:
+                        link_cau_hoi.append(link)
+                        print(f">>>>>> [HYPERLINK VIA METHOD] {link}")
+                
+                # 2. Detect hyperlink trực tiếp từ XML structure
+                for run in para.runs:
+                    # Tìm hyperlink element trong run
+                    hyperlink_elements = run._element.xpath('.//w:hyperlink', 
+                        namespaces={'w': 'http://schemas.openxmlformats.org/wordprocessingml/2006/main'})
+                    
+                    for hyperlink_elem in hyperlink_elements:
+                        r_id = hyperlink_elem.get('{http://schemas.openxmlformats.org/officeDocument/2006/relationships}id')
+                        if r_id and r_id in para.part.rels:
+                            rel = para.part.rels[r_id]
+                            if rel.reltype == 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/hyperlink':
+                                url = rel.target_ref
+                                if url and url.startswith('http'):
+                                    if url not in link_cau_hoi:
+                                        link_cau_hoi.append(url)
+                                        print(f">>>>>> [HYPERLINK VIA XML] {url}")
+
+                # ===== XỬ LÝ DÒNG "Audio:" =====
                 if text.startswith('Audio:'):
                     audio_content = text[6:].strip()
-                    print(f">>>>>> debug audio content: {audio_content}")
+                    
                     # Nếu ngay sau có link hợp lệ → dùng luôn
-                    if audio_content.startswith('https'):
-                        link_cau_hoi.append(f'Audio:{audio_content}')
+                    if audio_content.startswith('http'):
+                        if f'Audio:{audio_content}' not in link_cau_hoi:
+                            link_cau_hoi.append(f'Audio:{audio_content}')
                     else:
-                        # Nếu không, kiểm tra paragraph tiếp theo có URL không
+                        # Kiểm tra paragraph tiếp theo
                         if idx + 1 < len(thanh_phan_1q[0]):
                             next_para = thanh_phan_1q[0][idx + 1]
                             if isinstance(next_para, Paragraph):
                                 next_text = next_para.text.strip()
-                                # Kiểm tra link thuần hoặc link có hyperlink (giả lập: chỉ kiểm tra text)
-                                if next_text.startswith('https'):
-                                    link_cau_hoi.append(f'Audio:{next_text}')
-                                    # Bỏ qua para tiếp theo trong nội dung chính
-                                    # (nhưng vẫn giữ nguyên logic append → sẽ loại sau)
-                    continue  # Dù thế nào cũng không đưa "Audio:" vào nội dung chính
+                                if next_text.startswith('http'):
+                                    if f'Audio:{next_text}' not in link_cau_hoi:
+                                        link_cau_hoi.append(f'Audio:{next_text}')
+                    continue  # Không đưa dòng Audio: vào nội dung chính
 
-                # ——— XỬ LÝ URL THUẦN TRONG ĐOẠN VĂN ———
-                # Tìm mọi URL hợp lệ trong text (kể cả link bị kèm chữ)
+                # ===== XỬ LÝ URL THUẦN (plain text URLs) =====
                 url_matches = re.findall(r'https?://[^\s]+', text)
-                found_valid_url = False
-                for url in url_matches:
-                    url_clean = url.rstrip('.,;:')
-                    if url_clean not in [link.replace('Audio:', '', 1) for link in link_cau_hoi]:
-                        link_cau_hoi.append(url_clean)
-                        found_valid_url = True
-                # Nếu URL đứng riêng (không kèm text quan trọng), không thêm vào nội dung
-                if url_matches and not text[:text.find(url_matches[0])].strip():
-                    continue
+                is_url_only_para = False
+                
+                if url_matches:
+                    # Kiểm tra xem paragraph có phải chỉ chứa URL không
+                    text_without_urls = text
+                    for url in url_matches:
+                        text_without_urls = text_without_urls.replace(url, '')
+                    text_without_urls = text_without_urls.strip()
+                    
+                    # Nếu sau khi bỏ URL, không còn nội dung quan trọng
+                    is_url_only_para = len(text_without_urls) == 0
+                    
+                    # Thêm các URL vào danh sách
+                    for url in url_matches:
+                        url_clean = url.rstrip('.,;:')
+                        # Tránh duplicate với Audio: prefix
+                        already_exists = any(
+                            link == url_clean or link == f'Audio:{url_clean}' 
+                            for link in link_cau_hoi
+                        )
+                        if not already_exists:
+                            link_cau_hoi.append(url_clean)
+                            print(f">>>>>> [PLAIN URL] {url_clean}")
+                    
+                    # Nếu paragraph chỉ chứa URL, không thêm vào nội dung
+                    if is_url_only_para:
+                        continue
 
-            # Thêm vào nội dung chính nếu không phải dòng audio hoặc link thuần
-            thanh_phan_cau_hoi.append(para)
+                # Thêm vào nội dung câu hỏi (nếu không phải Audio: hoặc URL thuần)
+                thanh_phan_cau_hoi.append(para)
 
         # Xử lý links
         self.xu_ly_link_cau_hoi(link_cau_hoi, each_question_xml)
 
         # Phân tích lời giải
         thanh_phan_hdg = []
-
         link_speech_explain = []
+        has_sharpened = False
 
         for idx, para in enumerate(thanh_phan_1q[1]):
             if idx == 0:
-
                 thanh_phan_hdg.append([para])
                 continue
 
             if isinstance(para, Paragraph):
-
                 text = para.text.strip()
+                print(f">>>>>> debug text loi giai: {text}")
 
                 if text.startswith('###'):
-
+                    has_sharpened = True
                     thanh_phan_hdg.append([])
-
                     continue
+                
                 # URLs trong HDG
                 urls = re.findall(r'https?://[^\s]+', text)
-
                 for url in urls:
-
                     link_speech_explain.append(url)
-
                     continue
 
             if thanh_phan_hdg:
-
                 thanh_phan_hdg[-1].append(para)
 
         # Xử lý urlSpeechExplain
         if link_speech_explain:
-            # if len(link_speech_explain) > 1:
-            #     # raise ValueError(f"HDG chỉ được có 1 link TTS: {link_speech_explain}")
-            #     error_msg = f"HDG có nhiều hơn 1 link TTS ở câu hỏi {question_index}: {link_speech_explain}"
-            #     errors.append(error_msg)
-            #     print(f"[ERROR] protocol_of_q: {error_msg}")
-            #     # Có thể chọn 1 link hoặc bỏ qua, ở đây ta chọn link đầu tiên
-            #     if link_speech_explain[0].endswith(('.mp3', '.mp4')):
-            #         SubElement(each_question_xml, 'urlSpeechExplain').text = link_speech_explain[0]
             for link in link_speech_explain:
                 if link.endswith(('.mp3', '.mp4')):
                     SubElement(each_question_xml, 'urlSpeechExplain').text = link
 
         # Xác định dạng câu hỏi
         answer = thanh_phan_hdg[0][0].text.strip() if thanh_phan_hdg[0] else ''
-
         cau_sau_xu_ly = [thanh_phan_cau_hoi, thanh_phan_hdg]
 
-        # audio = [link for link in link_cau_hoi if 'Audio:' in link]
+        # Detect audio từ question list
         audio = []
-
         for item in question:
-
             if isinstance(item, Paragraph):
-
                 txt = item.text.strip()
-                if txt.startswith('Audio:'):
+                if txt.startswith('Audio:') or txt.startswith('https://mathplay.onluyen.vn'):
                     print(f">>>>>> debug txt have audio {txt}")
+                    audio.append(txt)
 
-                    # audio.append(txt)
+        print(f">>>>>>>>> debug has_sharpened: {has_sharpened}")
 
         # Routing theo subject
         if self.is_tinhoc_subject(subject):
             self.route_to_tinhoc_module(cau_sau_xu_ly, each_question_xml, audio, answer, subject, errors, question_index)
         else:
-            self.route_to_default_module(cau_sau_xu_ly, each_question_xml, audio, answer, subject, errors, question_index)
+            self.route_to_default_module(cau_sau_xu_ly, each_question_xml, audio, answer, subject, errors, question_index, has_sharpened)
+
+
 
 
     def is_tinhoc_subject(self, subject):
@@ -1063,17 +1422,58 @@ class DocxProcessor:
         else:
             self.dang_tl(cau_sau_xu_ly, xml, audio)
 
-    def route_to_default_module(self, cau_sau_xu_ly, xml, audio, answer, subject, errors, question_index):
+    def route_to_default_module(self, cau_sau_xu_ly, xml, audio, answer, subject, errors, question_index,has_sharpened):
         """Xử lý cho môn thông thường, nhận danh sách lỗi và số câu hỏi"""
         if re.match(r'^\d+', answer):
             if len(answer) > 1 and re.match(r'^[01]+', answer):
+                print(f">>>>>  Default → Dang Dung/Sai")
                 self.dang_ds(cau_sau_xu_ly, xml, audio)
             else:
+                print(f">>>>>  Default → Dang Trac Nghiem")
                 self.dang_tn(cau_sau_xu_ly, xml, audio)
         elif answer.startswith('##'):
+            print(f">>>>>  Default → Dang Dien Tu")
             self.dang_dt(cau_sau_xu_ly, xml, subject)
         else:
+            print(f">>>>>  Default → Dang Tu Luan")
             self.dang_tl(cau_sau_xu_ly, xml, audio)
+
+        """
+        Xử lý cho môn thông thường, nhận danh sách lỗi và số câu hỏi.
+        
+        Logic theo GAS:
+        - Chỉ xử lý TN/DS khi: has_sharpened === True VÀ answer là số thuần
+        - Xử lý Điền Từ khi: answer bắt đầu bằng ##
+        - Các trường hợp còn lại: Tự luận
+        """
+        
+        # ===== ĐIỀU KIỆN 1: has_sharpened === True VÀ answer là số thuần =====
+      
+        # answer = answer.strip()
+
+        # # ===== 1. ĐIỀN TỪ =====
+        # if answer.startswith('##'):
+        #     print('Default → Dang Dien Tu')
+        #     self.dang_dt(cau_sau_xu_ly, xml, subject)
+        #     return
+
+        # # ===== 2. TRẮC NGHIỆM / ĐÚNG SAI =====
+        # if has_sharpened is True and re.fullmatch(r'\d+', answer):
+
+        #     # ĐÚNG / SAI: 1010, 0110
+        #     if len(answer) > 1 and re.fullmatch(r'[01]+', answer):
+        #         print('Default → Dang Dung/Sai')
+        #         self.dang_ds(cau_sau_xu_ly, xml, audio)
+        #         return
+
+        #     # TRẮC NGHIỆM: 1,2,3,4
+        #     print('Default → Dang Trac Nghiem')
+        #     self.dang_tn(cau_sau_xu_ly, xml, audio)
+        #     return
+
+        # # ===== 3. TỰ LUẬN =====
+        # print('Default → Dang Tu Luan')
+        # self.dang_tl(cau_sau_xu_ly, xml, audio)
 
     # def xu_ly_link_cau_hoi(self, links: str, xml):
     #     """Xử lý links trong câu hỏi"""
@@ -1280,6 +1680,112 @@ class DocxProcessor:
         math_latex = re.compile(r"\$[^$]*\$")
         string_content = math_latex.sub(lambda m: f'<span class="math-tex">{m.group()}</span>', string_content)
         return string_content.strip()
+
+    # def convert_content_to_html(self, paragraphs):
+    #     """
+    #     Chuyển đổi danh sách Paragraph / Table / string thành HTML.
+    #     Xử lý đúng các dòng trống: mỗi paragraph rỗng → thêm 1 <br>.
+    #     Nếu 2 paragraph rỗng liên tiếp → <br><br>.
+    #     """
+    #     from docx.table import Table
+    #     from bs4 import BeautifulSoup
+
+    #     # Hàm đệ quy flatten
+    #     def _flatten(items):
+    #         for it in items:
+    #             if isinstance(it, (list, tuple)):
+    #                 yield from _flatten(it)
+    #             else:
+    #                 yield it
+
+    #     # Chuẩn hóa input
+    #     if paragraphs is None:
+    #         flat = []
+    #     elif isinstance(paragraphs, (list, tuple)):
+    #         flat = list(_flatten(paragraphs))
+    #     else:
+    #         flat = [paragraphs]
+
+    #     string_content = ""
+    #     prev_was_empty = False
+
+    #     for para in flat:
+    #         if para is None:
+    #             # Xử lý None như paragraph rỗng
+    #             if prev_was_empty:
+    #                 string_content += "<br><br>"
+    #             else:
+    #                 string_content += "<br>"
+    #             prev_was_empty = True
+    #             continue
+
+    #         # ——— XỬ LÝ TABLE ———
+    #         if isinstance(para, Table):
+    #             table_html = self.convert_table_to_html(para)
+    #             string_content += table_html + "<br>"
+    #             prev_was_empty = False
+    #             continue
+
+    #         # ——— XỬ LÝ STRING ———
+    #         if isinstance(para, str):
+    #             clean_str = para.strip()
+    #             is_empty = not clean_str or clean_str in ("<br>", "<br/>")
+    #             if is_empty:
+    #                 if prev_was_empty:
+    #                     string_content += "<br><br>"
+    #                 else:
+    #                     string_content += "<br>"
+    #                 prev_was_empty = True
+    #             else:
+    #                 string_content += para + "<br>"
+    #                 prev_was_empty = False
+    #             continue
+
+    #         # ——— XỬ LÝ PARAGRAPH ———
+    #         if isinstance(para, Paragraph):
+    #             new_children = []
+    #             try:
+    #                 self.convert_normal_paras(para, 0, new_children)
+    #                 para_html = "".join(new_children)
+    #                 # Dùng BeautifulSoup để lấy plain text (loại bỏ HTML tags)
+    #                 plain_text = BeautifulSoup(para_html, "html.parser").get_text().strip()
+    #                 is_empty = not plain_text
+    #             except Exception as e:
+    #                 # Fallback: coi là có nội dung
+    #                 para_html = str(para)
+    #                 is_empty = False
+
+    #             if is_empty:
+    #                 if prev_was_empty:
+    #                     string_content += "<br><br>"
+    #                 else:
+    #                     string_content += "<br>"
+    #                 prev_was_empty = True
+    #             else:
+    #                 string_content += para_html + "<br>"
+    #                 prev_was_empty = False
+    #         else:
+    #             # Fallback cho các loại khác
+    #             fallback_str = str(para)
+    #             if fallback_str.strip():
+    #                 string_content += fallback_str + "<br>"
+    #                 prev_was_empty = False
+    #             else:
+    #                 if prev_was_empty:
+    #                     string_content += "<br><br>"
+    #                 else:
+    #                     string_content += "<br>"
+    #                 prev_was_empty = True
+
+    #     # ——— XỬ LÝ MATH LATEX ———
+    #     import re
+    #     math_latex = re.compile(r"\$[^$]*\$")
+    #     string_content = math_latex.sub(
+    #         lambda m: f'<span class="math-tex">{m.group()}</span>',
+    #         string_content
+    #     )
+
+    #     return string_content.strip()
 
     def dang_tn(self, cau_sau_xu_ly, xml, audio):
         """
